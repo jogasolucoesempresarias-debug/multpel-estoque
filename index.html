@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel · Estoque</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2338bdf8'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='17' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EE%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<link rel="stylesheet" href="/static/estoque.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">E</div>
+    <h1>Multpel <span>· Estoque</span></h1>
+  </div>
+  <div class="comprador-box">
+    <label>Comprador</label>
+    <select id="f-comprador" class="fb-control"><option value="">Empresa toda</option></select>
+  </div>
+  <div class="meta">
+    <div id="meta-gerado">—</div>
+    <div id="meta-filiais" class="mono">—</div>
+  </div>
+</div>
+
+<div class="filterbar">
+  <div class="fb-group">
+    <label>Filiais</label>
+    <div class="chips" id="f-filiais"></div>
+  </div>
+  <div class="fb-group">
+    <label>Estoque</label>
+    <div class="seg" id="f-base">
+      <span class="seg-opt on" data-v="endereco">Endereçado</span>
+      <span class="seg-opt" data-v="gerencial">Gerencial</span>
+    </div>
+  </div>
+  <div class="fb-group"><label>Curva</label>
+    <select id="f-curva" class="fb-control"><option value="">Todas</option><option>A</option><option>B</option><option>C</option></select></div>
+  <div class="fb-group"><label>XYZ</label>
+    <select id="f-xyz" class="fb-control"><option value="">Todas</option><option>X</option><option>Y</option><option>Z</option></select></div>
+  <div class="fb-group"><label>Fornecedor</label>
+    <select id="f-fornec" class="fb-control"><option value="">Todos</option></select></div>
+  <div class="fb-group"><label>Depto</label>
+    <select id="f-depto" class="fb-control"><option value="">Todos</option></select></div>
+  <div class="fb-group grow"><label>Buscar produto</label>
+    <input type="text" id="f-busca" class="search" placeholder="código ou descrição…"></div>
+  <div class="fb-group"><label>Venda</label>
+    <select id="f-vperiodo" class="fb-control"><option value="mes">Mês atual</option><option value="90d">Últimos 90d</option><option value="12m">12 meses</option></select></div>
+  <button class="btn sm" id="btn-params">⚙ Parâmetros</button>
+</div>
+
+<div class="panel" id="params-panel" style="display:none; margin:12px 22px 0;">
+  <div class="row">
+    <div class="fb-group"><label>Lead time (dias)</label><input type="number" id="p-lead" value="10" style="width:80px"></div>
+    <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>
+    <div class="fb-group"><label>Cobertura alvo (dias)</label><input type="number" id="p-cob" value="45" style="width:80px"></div>
+    <div class="fb-group"><label>Horizonte validade (dias)</label><input type="number" id="p-hor" value="30" style="width:80px"></div>
+    <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
+  </div>
+  <div class="count-line">Giro = média dos últimos 3 meses (oficial). Estoque endereçado = WMS filiais 3+5 (igual ao diretor).</div>
+</div>
+
+<div class="tabs" id="tabs">
+  <div class="tab" data-view="fila">⚡ Minha Fila</div>
+  <div class="tab active" data-view="cockpit">Cockpit</div>
+  <div class="tab" data-view="ruptura">Ruptura</div>
+  <div class="tab" data-view="reposicao">Reposição</div>
+  <div class="tab" data-view="validade">Validade</div>
+  <div class="tab" data-view="parado">Parado</div>
+  <div class="tab" data-view="orcamento">Orçamento</div>
+  <div class="tab" data-view="comprasvendas">Compras × Vendas</div>
+  <div class="tab" data-view="abcxyz">ABC-XYZ</div>
+  <div class="tab" data-view="fornecedores">Fornecedores</div>
+  <div class="tab" data-view="produtos">Produtos</div>
+</div>
+
+<main>
+  <div id="loader" class="loader"><div class="spinner"></div>Carregando estoque…</div>
+  <div id="content" style="display:none">
+    <section class="view" id="v-fila"></section>
+    <section class="view active" id="v-cockpit"></section>
+    <section class="view" id="v-ruptura"></section>
+    <section class="view" id="v-reposicao"></section>
+    <section class="view" id="v-validade"></section>
+    <section class="view" id="v-parado"></section>
+    <section class="view" id="v-orcamento"></section>
+    <section class="view" id="v-comprasvendas"></section>
+    <section class="view" id="v-abcxyz"></section>
+    <section class="view" id="v-fornecedores"></section>
+    <section class="view" id="v-produtos"></section>
+  </div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
+
+<script src="/static/estoque.js"></script>
+</body>
+</html>

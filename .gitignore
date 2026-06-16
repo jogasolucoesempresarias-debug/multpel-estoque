@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Artefatos de análise / planilhas
+*.xlsx
+*.csv
+.pytest_cache/
+*.log

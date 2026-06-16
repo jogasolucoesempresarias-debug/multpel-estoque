@@ -1,0 +1,61 @@
+# Stack Swarm/Portainer do Painel de Estoque (servidor JOGA).
+# Isolado: Postgres próprio (não toca no multpel_db do cliente). Preencher os ${...} no Portainer.
+version: '3.8'
+
+services:
+  estoque-app:
+    image: ghcr.io/jogasolucoesempresarias-debug/multpel-estoque:latest
+    networks:
+      - proxy
+      - estoque-internal
+    environment:
+      PORT: "5001"
+      SECRET_KEY: ${SECRET_KEY}
+      ESTOQUE_SENHA: ${ESTOQUE_SENHA}          # senha única que você passa pro sócio
+      DB_HOST: estoque-postgres
+      DB_PORT: "5432"
+      DB_NAME: estoque_db
+      DB_USER: estoque
+      DB_PASSWORD: ${DB_PASSWORD}
+      POWERBI_TENANT_ID: ${POWERBI_TENANT_ID}
+      POWERBI_CLIENT_ID: ${POWERBI_CLIENT_ID}
+      POWERBI_CLIENT_SECRET: ${POWERBI_CLIENT_SECRET}
+      POWERBI_GROUP_ID: ${POWERBI_GROUP_ID}
+      POWERBI_DATASET_ID_ESTOQUE: 32fb60e1-5ff1-47ae-9472-b7ce7049f2ce
+      POWERBI_DATASET_ID_RCA: f2fbf288-611a-4b17-aeb3-a6f77ef04e3b
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=proxy"
+        - "traefik.http.routers.estoque.rule=Host(`estoque.jogasolucoes.com.br`)"
+        - "traefik.http.routers.estoque.entrypoints=websecure"
+        - "traefik.http.routers.estoque.tls.certresolver=le"
+        - "traefik.http.services.estoque.loadbalancer.server.port=5001"
+
+  estoque-postgres:
+    image: postgres:16-alpine
+    networks:
+      - estoque-internal
+    environment:
+      POSTGRES_DB: estoque_db
+      POSTGRES_USER: estoque
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - estoque-pgdata:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  proxy:
+    external: true
+  estoque-internal:
+    driver: overlay
+
+volumes:
+  estoque-pgdata:

@@ -1,0 +1,15 @@
+.git
+.github
+__pycache__
+*.pyc
+.venv
+venv
+.env
+*.xlsx
+*.csv
+*.log
+.pytest_cache
+docs
+test_novas_tabelas.py
+README.md
+docker-compose*.yml
