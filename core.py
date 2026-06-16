@@ -130,7 +130,9 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         est_seg = giro_dia * params["dias_seguranca"]
         rop = giro_dia * lead + est_seg
         est_alvo = giro_dia * params["cobertura_total"]
-        sugestao = max(0.0, est_alvo - qtdisp)            # alinhado ao diretor (alvo − QTDISP)
+        # posição efetiva = disponível + o que já está a caminho (evita comprar de novo o já pedido)
+        posicao = qtdisp + qttransito + qtpend
+        sugestao = max(0.0, est_alvo - posicao)
 
         if giro_dia <= 0:
             status_abast = "sem_giro" if qtdisp > 0 else "ok"
