@@ -263,7 +263,7 @@ def api_snapshot():
         "n": len(produtos),
         "produtos": produtos,
         "cockpit": core.cockpit(produtos),
-        "fornecedores": core.fornecedores(produtos),
+        "fornecedores": core.fornecedores(produtos, params),
         "compradores": core.por_comprador(produtos),
     })
 
@@ -324,9 +324,9 @@ def _export_data(view):
         cols = ["codprod", "descricao", "fornecedor", "comprador", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
-        produtos, _, _ = _build_produtos()
-        linhas = core.fornecedores(produtos)
-        cols = ["codfornec", "fornecedor", "comprador", "n_produtos", "valor", "giro",
+        produtos, params, _ = _build_produtos()
+        linhas = core.fornecedores(produtos, params)
+        cols = ["codfornec", "fornecedor", "comprador", "n_produtos", "valor", "giro", "cobertura",
                 "venda", "lucro", "margem", "perc_giro", "perc_estoque", "indice", "classificacao"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()

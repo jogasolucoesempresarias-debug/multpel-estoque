@@ -102,7 +102,7 @@ function agg(P){
   const comGiro=P.filter(p=>(p.giro_dia||0)>0);
   const semGiro=P.filter(p=>(p.giro_dia||0)<=0&&(p.qtdisp||0)>0);
   const parados=P.filter(p=>p.status_parado);
-  const repor=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0);
+  const repor=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const rupt=P.filter(p=>p.status_ruptura);
   const faixas=FAIXAS.map(([n,lo,hi])=>{const it=comGiro.filter(p=>p.cobertura!=null&&p.cobertura>=lo&&p.cobertura<=hi);return{faixa:n,qt:it.length,valor:sum(it,p=>p.valor)};});
   faixas.push({faixa:'sem giro',qt:semGiro.length,valor:sum(semGiro,p=>p.valor)});
@@ -241,20 +241,27 @@ function renderRuptura(P){
 }
 
 function renderReposicao(P){
-  const rep=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0);
+  const rep=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
+  const suspensos=P.filter(p=>p.compra_suspensa).sort((a,b)=>(b.sugestao_compra*b.custo_unit)-(a.sugestao_compra*a.custo_unit));
   // agrupa por fornecedor
   const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.sugestao_compra||0)*(p.custo_unit||0);});
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   const el=$('#v-reposicao');
   el.innerHTML=head('Reposição — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão = estoque-alvo (giro/dia × cobertura alvo) − disponível. Lead time usa o prazo do fornecedor quando houver.</div>`+
+    `<div class="count-line">Sugestão = estoque-alvo (giro/dia × cobertura alvo) − (disponível + trânsito + pendente). Lead time usa o prazo do fornecedor quando houver.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Sugerido</th><th class="num">Valor</th></tr></thead>
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura||0)-(b.cobertura||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${cob(p.cobertura)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td><td class="num">${money((p.sugestao_compra||0)*(p.custo_unit||0))}</td></tr>`).join('')}</tbody></table></div>
-      </div>`).join('');
+      </div>`).join('')+
+    (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
+      <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
+      <div class="count-line">Têm giro na média de 3 meses, mas <b>sem venda há ≥60 dias</b> → a sugestão pode estar comprando estoque que travou. Confira antes de pedir.</div>
+      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.</th><th class="num">Dias s/ venda</th><th class="num">Giro/mês</th><th class="num">Sugeria</th></tr></thead>
+      <tbody>${suspensos.slice(0,100).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.dias_sem_venda==null?'—':int(p.dias_sem_venda)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td></tr>`).join('')}</tbody></table></div>
+    </div>`:'');
   el.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact'))openProduto(tr.dataset.cod);});
   el.querySelectorAll('[data-fornped]').forEach(b=>b.onclick=()=>{ const gr=grupos.find(x=>String(x.cod)===b.dataset.fornped); modalPedidoFornecedor(gr); });
 }
@@ -311,10 +318,14 @@ function renderABCXYZ(P){
 
 function renderFornecedores(P){
   const tv=P.reduce((s,p)=>s+(p.valor||0),0)||1,tg=P.reduce((s,p)=>s+(p.giro_mes||0),0)||1,g={};
-  P.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);});
-  const F=Object.values(g).map(o=>{const pg=o.giro/tg*100,pe=o.valor/tv*100,idx=pe>0?pg/pe:(pg>0?999:0);return{...o,pg,pe,idx,margem:o.venda?o.lucro/o.venda*100:null,cl:o.giro<=0?'critico_sem_giro':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto'))};}).sort((a,b)=>b.valor-a.valor);
+  P.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
+  const lead=S.params.lead||10;
+  const F=Object.values(g).map(o=>{const pg=o.giro/tg*100,pe=o.valor/tv*100,idx=pe>0?pg/pe:(pg>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
+    let cl=o.giro<=0?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
+    return{...o,pg,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,cl};}).sort((a,b)=>b.valor-a.valor);
   const cols=[{key:'codfornec',label:'Cód',num:true},{key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod">${esc(v)}</span>`},
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},
+    {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'venda',label:'Venda',num:true,fmt:money},{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pg',label:'% giro',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
@@ -323,7 +334,7 @@ function renderFornecedores(P){
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}</th>`).join('');
   const body=rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>{let v=r[c.key];if(c.badge)return`<td>${badge(v)}</td>`;if(c.fmt)v=c.fmt(v);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
   $('#v-fornecedores').innerHTML=head('Desempenho por fornecedor — giro × estoque','fornecedores')+
-    `<div class="count-line">Índice = % no giro ÷ % no estoque. &gt;1 = gira mais do que pesa no estoque.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
+    `<div class="count-line">Índice = % no giro ÷ % no estoque (&gt;1 = gira mais do que pesa). <b>Ruptura</b> = gira mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
   $('#v-fornecedores').querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['fornecedores']||{};S.sort['fornecedores']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
 }
 

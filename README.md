@@ -56,15 +56,15 @@ A Action republica a `:latest`. No servidor, force o redeploy puxando a imagem n
 ```bash
 docker service update \
   --image ghcr.io/jogasolucoesempresarias-debug/multpel-estoque:latest \
-  --with-registry-auth --force estoque_estoque-app
+  --with-registry-auth --force multpel-estoque_estoque-app
 ```
-Ou pelo Portainer: **Stacks → estoque → Update / Re-pull image**.
+Ou pelo Portainer: **Stacks → multpel-estoque → Update / Re-pull image**.
 
 ### Diagnóstico
 ```bash
-docker stack services estoque                            # status
-docker service logs -f --tail 200 estoque_estoque-app    # logs do app
-docker service logs --tail 50 estoque_estoque-postgres   # logs do banco
+docker stack services multpel-estoque                          # status
+docker service logs -f --tail 200 multpel-estoque_estoque-app  # logs do app
+docker service logs --tail 50 multpel-estoque_estoque-postgres # logs do banco
 curl -I https://estoque.jogasolucoes.com.br/health       # liveness
 ```
 

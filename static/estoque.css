@@ -149,7 +149,7 @@ td .prod { max-width: 320px; overflow: hidden; text-overflow: ellipsis; display:
 .b-B,.b-equilibrado,.b-media,.b-planejar,.b-comprar { background: rgba(56,189,248,.16); color: var(--accent); }
 .b-C,.b-antiga,.b-excesso { background: rgba(148,163,184,.16); color: var(--text-dim); }
 .b-atencao,.b-estoque_alto,.b-medio { background: rgba(251,191,36,.16); color: var(--yellow); }
-.b-critico,.b-urgente,.b-alto { background: rgba(248,113,113,.16); color: var(--red); }
+.b-critico,.b-urgente,.b-alto,.b-ruptura { background: rgba(248,113,113,.16); color: var(--red); }
 .b-muito_critico,.b-critico_sem_giro,.b-sem_giro,.b-sem_saida,.b-giro_zero { background: rgba(192,132,252,.16); color: var(--purple); }
 .b-X { background: rgba(52,211,153,.16); color: var(--green); }
 .b-Y { background: rgba(251,191,36,.16); color: var(--yellow); }

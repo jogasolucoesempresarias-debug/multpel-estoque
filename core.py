@@ -186,6 +186,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         else:
             status_saida = "antiga"
 
+        # compra suspensa: tem giro (média 3m, defasada) mas parou de vender há tempo
+        # → não sugerir comprar estoque morto (giro está "preso" no histórico)
+        compra_suspensa = (giro_dia > 0 and dias_sem_venda is not None
+                           and dias_sem_venda >= params["parado_atencao"])
+
         # venda real (RCA, líquida) do período
         vd = venda_map.get(cod) or {}
         venda = vd.get("venda", 0.0)
@@ -233,6 +238,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "lead_efetivo": _round(lead),
             "rop": _round(rop), "est_seguranca": _round(est_seg),
             "est_alvo": _round(est_alvo), "sugestao_compra": _round(sugestao),
+            "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,
             "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,
             "status_parado": status_parado,
@@ -306,7 +312,9 @@ def cockpit(produtos):
         itens = [p for p in produtos if p[field] == val]
         return {"qt": len(itens), "valor": _round(sum(p["valor"] or 0 for p in itens))}
 
-    repor = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
+    repor = [p for p in produtos if (p["sugestao_compra"] or 0) > 0
+             and (p["giro_dia"] or 0) > 0 and not p.get("compra_suspensa")]
+    suspensos = [p for p in produtos if p.get("compra_suspensa")]
     em_ruptura = [p for p in produtos if p["status_ruptura"]]
 
     return {
@@ -345,13 +353,15 @@ def cockpit(produtos):
             "n_repor": len(repor),
             "qt_sugerida": _round(sum(p["sugestao_compra"] or 0 for p in repor)),
             "valor_sugerido": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in repor)),
+            "n_suspensos": len(suspensos),
+            "valor_suspenso": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in suspensos)),
         },
         "valor_risco_venc": None,  # preenchido pelo app a partir do FEFO
     }
 
 
 # ───────────────────────── fornecedores ─────────────────────────
-def fornecedores(produtos):
+def fornecedores(produtos, params=None):
     total_valor = sum(p["valor"] or 0 for p in produtos) or 1
     total_giro = sum(p["giro_mes"] or 0 for p in produtos) or 1
     grupos = {}
@@ -362,23 +372,31 @@ def fornecedores(produtos):
         g = grupos.setdefault(cf, {
             "codfornec": cf, "fornecedor": p["fornecedor"] or f"FORN {cf}",
             "comprador": p.get("comprador"),
-            "n_produtos": 0, "valor": 0.0, "giro": 0.0, "venda": 0.0, "lucro": 0.0, "n_sem_giro": 0,
+            "n_produtos": 0, "valor": 0.0, "giro": 0.0, "venda": 0.0, "lucro": 0.0,
+            "disponivel": 0.0, "giro_dia": 0.0, "n_sem_giro": 0,
         })
         g["n_produtos"] += 1
         g["valor"] += (p["valor"] or 0)
         g["giro"] += (p["giro_mes"] or 0)
         g["venda"] += (p["venda"] or 0)
         g["lucro"] += (p["lucro"] or 0)
+        g["disponivel"] += (p["qtdisp"] or 0)
+        g["giro_dia"] += (p["giro_dia"] or 0)
         if (p["giro_dia"] or 0) <= 0 and (p["qtdisp"] or 0) > 0:
             g["n_sem_giro"] += 1
 
+    lead = params["lead_time"] if params else DEFAULTS["lead_time"]
     saida = []
     for g in grupos.values():
         perc_giro = g["giro"] / total_giro * 100
         perc_est = g["valor"] / total_valor * 100
         indice = (perc_giro / perc_est) if perc_est > 0 else (999.0 if perc_giro > 0 else 0.0)
+        # cobertura média do fornecedor (dias) — distingue eficiência real de desabastecimento
+        cobertura = (g["disponivel"] / g["giro_dia"]) if g["giro_dia"] > 0 else None
         if g["giro"] <= 0:
             classif = "critico_sem_giro"
+        elif cobertura is not None and cobertura < lead:
+            classif = "ruptura"            # gira mas quase sem estoque (não é performance)
         elif indice >= 1.2:
             classif = "alta_performance"
         elif indice >= 0.8:
@@ -390,6 +408,7 @@ def fornecedores(produtos):
             "valor": _round(g["valor"]), "giro": _round(g["giro"]),
             "venda": _round(g["venda"]), "lucro": _round(g["lucro"]),
             "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
+            "cobertura": _round(cobertura, 1) if cobertura is not None else None,
             "perc_giro": _round(perc_giro, 2), "perc_estoque": _round(perc_est, 2),
             "indice": _round(indice, 2), "classificacao": classif,
         })
@@ -417,7 +436,7 @@ def por_comprador(produtos):
             g["n_ruptura"] += 1
         if p["status_parado"]:
             g["valor_parado"] += (p["valor"] or 0)
-        if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0:
+        if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0 and not p.get("compra_suspensa"):
             g["sugestao_valor"] += (p["sugestao_compra"] or 0) * (p["custo_unit"] or 0)
     saida = []
     for g in grupos.values():
