@@ -559,6 +559,13 @@ async function init(){
   $('#f-depto').onchange=e=>{S.cli.depto=e.target.value;render();};
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
+  $('#btn-limpar').onclick=()=>{
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''};
+    S.compradorNome='';
+    ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
+    $('#f-busca').value='';
+    render();
+  };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
