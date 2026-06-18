@@ -430,15 +430,22 @@ function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
 function modalPedido(prod){ // prod opcional (pré-preenche fornecedor + valor sugerido)
   const comp=S.compradorNome||'TODOS', hoje=new Date().toISOString().slice(0,10);
   const vsug=prod?((prod.sugestao_compra||0)*(prod.custo_unit||0)):'';
+  const dl=(S.fornecedores||[]).map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
   openModal(`<h3>Novo pedido de compra</h3>
     <label>Data</label><input type="date" id="pd-data" value="${hoje}">
-    <label>Fornecedor</label><input type="text" id="pd-forn" value="${prod?esc(prod.fornecedor||''):''}">
+    <label>Fornecedor</label><input type="text" id="pd-forn" list="pd-forn-dl" autocomplete="off" placeholder="digite e selecione…" value="${prod?esc(prod.fornecedor||''):''}"><datalist id="pd-forn-dl">${dl}</datalist>
     <label>Nº pedido</label><input type="text" id="pd-num">
     <label>Valor (R$)</label><input type="number" id="pd-valor" value="${vsug?vsug.toFixed(2):''}" step="0.01">
     <label>Prazo pagamento (dias)</label><input type="number" id="pd-prazo">
     <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar</button></div>`);
   $('#m-cancel').onclick=closeModal;
-  $('#m-ok').onclick=async()=>{ await postJSON('/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:prod?prod.codfornec:null,fornecedor:$('#pd-forn').value,n_pedido:$('#pd-num').value,valor:+$('#pd-valor').value||0,prazo_dias:+$('#pd-prazo').value||null}); closeModal(); toast('Pedido lançado'); if(S.view==='orcamento')renderOrcamento(); };
+  $('#m-ok').onclick=async()=>{
+    const nome=($('#pd-forn').value||'').trim();
+    const match=(S.fornecedores||[]).find(x=>(x.fornecedor||'').toLowerCase()===nome.toLowerCase());
+    if(nome && !match && !confirm('Fornecedor não está na lista. Lançar mesmo assim com o texto digitado?')) return;
+    const cod=match?match.codfornec:(prod?prod.codfornec:null);
+    await postJSON('/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:cod,fornecedor:match?match.fornecedor:nome,n_pedido:$('#pd-num').value,valor:+$('#pd-valor').value||0,prazo_dias:+$('#pd-prazo').value||null});
+    closeModal(); toast('Pedido lançado'); if(S.view==='orcamento')renderOrcamento(); };
 }
 function modalPedidoFornecedor(gr){ // loop: gera 1 pedido com a soma da sugestão do fornecedor
   const comp=S.compradorNome||'TODOS', hoje=new Date().toISOString().slice(0,10);
@@ -530,6 +537,7 @@ async function init(){
     const fsel=(pr.filiais&&pr.filiais.length)?pr.filiais:(f.filiais_padrao||f.filiais);
     S.filiaisSel=new Set(fsel);
     $('#f-filiais').innerHTML=f.filiais.map(x=>`<span class="chip ${S.filiaisSel.has(x)?'on':''}" data-f="${x}">${x}</span>`).join('');
+    S.fornecedores=f.fornecedores||[];
     $('#f-fornec').innerHTML+=f.fornecedores.map(o=>`<option value="${o.codfornec}">${esc(o.fornecedor)}</option>`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
     $('#f-comprador').innerHTML='<option value="">Empresa toda</option>'+f.compradores.filter(c=>c.codcomprador>0).map(c=>`<option value="${c.codcomprador}">${esc(c.comprador)}</option>`).join('');
