@@ -51,18 +51,21 @@ body {
 
 /* ───── filter bar ───── */
 .filterbar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: flex; align-items: flex-end; gap: 10px 14px; flex-wrap: wrap;
   padding: 12px 22px; border-bottom: 1px solid var(--border);
   background: var(--surface); position: sticky; top: 63px; z-index: 35;
 }
-.fb-group { display: flex; flex-direction: column; gap: 3px; }
-.fb-group label { font-size: .64rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: .5px; padding-left: 2px; }
+/* cada grupo mantém tamanho natural e quebra de linha (não sobrepõe o vizinho) */
+.fb-group { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; min-width: 0; }
+.fb-group label { font-size: .64rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: .5px; padding-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .fb-control, select, input[type=text], input[type=number] {
   background: var(--surface2); border: 1px solid var(--border); color: var(--text);
   padding: 7px 10px; border-radius: 7px; font-family: inherit; font-size: .8rem; outline: none;
 }
 .fb-control:focus, select:focus, input:focus { border-color: var(--accent); }
-input[type=text].search { min-width: 220px; }
+.filterbar select { max-width: 240px; }                /* fornecedor não estoura a barra */
+.fb-group.grow { flex: 1 1 220px; }                     /* busca cresce, mas com base mínima */
+input[type=text].search { width: 100%; min-width: 0; }
 .fb-spacer { flex: 1; }
 .btn {
   padding: 7px 13px; background: var(--surface2); border: 1px solid var(--border);

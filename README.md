@@ -50,15 +50,26 @@ git push main  →  GitHub Action (deploy.yml)  →  ghcr.io/jogasolucoesempresa
 4. A stack sobe **app + Postgres próprio** (`estoque_db`); as tabelas `estoque_*` são criadas no 1º boot.
 5. Como a imagem GHCR é **privada**, o Portainer precisa da credencial do GHCR (a mesma org/registry do `multpelhtlm` — já configurada).
 
-### Atualizar (a cada push novo)
-A Action republica a `:latest`. No servidor, force o redeploy puxando a imagem nova
-(`--with-registry-auth` é obrigatório porque a imagem é privada):
+### 🚀 Como subir uma atualização (ROTINA — guardar este passo a passo)
+
+**1) No PC (pasta `MultpelEstoque`)** — commitar e enviar:
+```bash
+git add -A
+git commit -m "descreva a mudança"
+git push origin main
+```
+
+**2) Esperar a GitHub Action** ficar verde (aba **Actions** do repo, ~2-3 min). Ela rebuilda e republica a imagem `:latest` no GHCR.
+
+**3) No servidor (JOGA)** — forçar o redeploy puxando a imagem nova. **Este é o comando de sempre** (`--with-registry-auth` é obrigatório porque a imagem é privada):
 ```bash
 docker service update \
   --image ghcr.io/jogasolucoesempresarias-debug/multpel-estoque:latest \
   --with-registry-auth --force multpel-estoque_estoque-app
 ```
-Ou pelo Portainer: **Stacks → multpel-estoque → Update / Re-pull image**.
+> Alternativa pelo Portainer: **Stacks → multpel-estoque → Pull and redeploy** (marcar "re-pull image").
+
+**4) Conferir:** `curl -I https://estoque.jogasolucoes.com.br/health` (espera `200`). Se for mudança de tela, peça pro usuário dar **Ctrl+Shift+R** (limpa o cache do CSS/JS).
 
 ### Diagnóstico
 ```bash
