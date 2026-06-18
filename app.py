@@ -161,6 +161,8 @@ def _hoje():
 def _venda_datas(periodo, hoje):
     if periodo == "90d":
         return hoje - timedelta(days=90), hoje
+    if periodo == "6m":
+        return hoje - timedelta(days=180), hoje
     if periodo == "12m":
         return hoje - timedelta(days=365), hoje
     return hoje.replace(day=1), hoje  # mês atual (default)

@@ -155,7 +155,7 @@ function renderCockpit(P){
   const k=agg(P), v=S.validade?.resumo||{};
   const el=$('#v-cockpit');
   const totItens=P.length||1;
-  const periodoLbl={mes:'no mês','90d':'90 dias','12m':'12 meses'}[S.vperiodo];
+  const periodoLbl={mes:'no mês','90d':'90 dias','6m':'6 meses','12m':'12 meses'}[S.vperiodo];
   el.innerHTML=`
    <div class="kpi-grid">
      ${kpi('Valor em estoque',money(k.valor_total),int(k.com_estoque)+' itens (compras)',C.accent)}
@@ -352,7 +352,7 @@ function renderComprasVendas(P){
     ${['comprador','fornecedor','produto'].map(d=>`<span class="seg-opt ${d===dim?'on':''}" data-d="${d}">${({comprador:'Por comprador',fornecedor:'Por fornecedor',produto:'Por produto'})[d]}</span>`).join('')}</div>`;
   const expv=dim==='comprador'?'compradores':(dim==='fornecedor'?'fornecedores':'comprasvendas');
   let html=`<h2 class="section"><span>Compras × Vendas — ${({comprador:'por comprador',fornecedor:'por fornecedor',produto:'por produto'})[dim]}</span>${exportBtns(expv)}</h2>
-    <div class="count-line" style="display:flex;justify-content:space-between;align-items:center">${seg}<span>Estoque = capital em compras · Venda/Lucro/Margem = realizado no período (${({mes:'mês',['90d']:'90d',['12m']:'12m'})[S.vperiodo]})</span></div>`;
+    <div class="count-line" style="display:flex;justify-content:space-between;align-items:center">${seg}<span>Estoque = capital em compras · Venda/Lucro/Margem = realizado no período (${({mes:'mês',['90d']:'90d',['6m']:'6m',['12m']:'12m'})[S.vperiodo]})</span></div>`;
   if(dim==='produto'){
     const cols=[colCod,colProd,colForn,{key:'comprador',label:'Comprador',fmt:v=>esc((v||'').split(' ')[0]||'—')},
       {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'venda',label:'Venda R$',num:true,fmt:money},
