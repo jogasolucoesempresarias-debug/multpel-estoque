@@ -105,6 +105,23 @@ FILTER(
 )"""
 
 
+def q_vendas_mensal_rca(data_ini):
+    """Venda (QT) por CODPROD × mês (AnoMes YYYYMM) desde data_ini. Base do forecast.
+    GROUPBY autossuficiente (não depende de relacionamento com CALENDARIO)."""
+    return f"""EVALUATE
+VAR base =
+    ADDCOLUMNS(
+        FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}),
+        "AM", YEAR(FATURAMENTO_VENDAS[DTSAIDA]) * 100 + MONTH(FATURAMENTO_VENDAS[DTSAIDA])
+    )
+RETURN
+GROUPBY(
+    base,
+    FATURAMENTO_VENDAS[CODPROD], [AM],
+    "qtd", SUMX(CURRENTGROUP(), FATURAMENTO_VENDAS[QT])
+)"""
+
+
 def q_devol_av_rca(data_ini, data_fim):
     """Devolução avulsa (valor+custo) por CODPROD no período (DTENT)."""
     return f"""EVALUATE

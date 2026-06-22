@@ -62,7 +62,16 @@
     <div class="fb-group"><label>Horizonte validade (dias)</label><input type="number" id="p-hor" value="30" style="width:80px"></div>
     <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
   </div>
-  <div class="count-line">Giro = média dos últimos 3 meses (oficial). Estoque endereçado = WMS filiais 3+5 (igual ao diretor).</div>
+  <div class="row" style="margin-top:6px;border-top:1px solid var(--line,#1e293b);padding-top:10px">
+    <div class="fb-group"><label>Demanda (giro)</label>
+      <div class="seg" id="p-forecast">
+        <span class="seg-opt on" data-v="0">Média 3m (oficial)</span>
+        <span class="seg-opt" data-v="1">Forecast (RCA)</span>
+      </div>
+    </div>
+    <div class="fb-group"><label>Janela forecast (meses)</label><input type="number" id="p-fcmeses" value="6" min="1" max="24" style="width:80px"></div>
+  </div>
+  <div class="count-line">Giro = média 3m (oficial do TI) ou forecast = média móvel simples da venda real (RCA) na janela. Estoque endereçado = WMS filiais 3+5.</div>
 </div>
 
 <div class="tabs" id="tabs">
@@ -70,6 +79,7 @@
   <div class="tab active" data-view="cockpit">Cockpit</div>
   <div class="tab" data-view="ruptura">Ruptura</div>
   <div class="tab" data-view="reposicao">Reposição</div>
+  <div class="tab" data-view="plano">Plano reposição</div>
   <div class="tab" data-view="validade">Validade</div>
   <div class="tab" data-view="parado">Parado</div>
   <div class="tab" data-view="orcamento">Orçamento</div>
@@ -86,6 +96,7 @@
     <section class="view active" id="v-cockpit"></section>
     <section class="view" id="v-ruptura"></section>
     <section class="view" id="v-reposicao"></section>
+    <section class="view" id="v-plano"></section>
     <section class="view" id="v-validade"></section>
     <section class="view" id="v-parado"></section>
     <section class="view" id="v-orcamento"></section>

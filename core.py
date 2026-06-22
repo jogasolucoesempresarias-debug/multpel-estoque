@@ -9,8 +9,9 @@ Técnicas: Days of Supply, ABC (Pareto), XYZ (variabilidade), matriz ABC-XYZ,
 ponto de reposição (ROP) com lead time por fornecedor, ruptura, dead stock, FEFO.
 """
 
+import math
 import statistics
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 
 # ───────────────────────── parâmetros (configuráveis) ─────────────────────────
@@ -30,6 +31,8 @@ DEFAULTS = {
     "abc_b":            95.0,
     "xyz_x":            0.5,       # coeficiente de variação
     "xyz_y":            1.0,
+    "forecast":         0,         # 1 = giro vem do forecast (RCA mensal); 0 = média3 oficial
+    "forecast_meses":   6,         # janela da média móvel simples do forecast bruto
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
@@ -76,17 +79,42 @@ def _giro_mensal(row, base):
     return round((g1 + g2 + g3) / 3)  # media3 — oficial do TI
 
 
+def _meses_anteriores(hoje, n):
+    """Lista dos N AnoMes (YYYYMM) imediatamente anteriores ao mês de `hoje` (mais recente 1º)."""
+    out, ano, mes = [], hoje.year, hoje.month
+    for _ in range(n):
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+        out.append(ano * 100 + mes)
+    return out
+
+
+def previsao_giro_mensal(serie_am, meses, hoje):
+    """Forecast bruto: média móvel SIMPLES da QT vendida nos N meses fechados anteriores.
+    serie_am: {AnoMes: qtd}. Retorna giro mensal previsto (qtd/mês) ou None se sem histórico."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(meses))
+    total = sum(_n(serie_am.get(am)) for am in chaves)
+    return round(total / len(chaves)) if chaves else None
+
+
 def _round(v, n=2):
     return round(v, n) if isinstance(v, (int, float)) else v
 
 
 # ───────────────────────── produtos ─────────────────────────
-def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params, hoje=None):
+def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
+                       hoje=None, venda_mensal_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
+    venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
     Mantém só produtos do cadastro (revenda/não-FL)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
+    forecast_on = bool(params.get("forecast"))
+    fc_meses = int(params.get("forecast_meses", 6))
     out = []
     for r in snapshot:
         cod = int(_n(r.get("CODPROD")))
@@ -109,9 +137,18 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             qtdisp = qt_end
         valor = qtdisp * custofin
 
-        giro_mes = _giro_mensal(r, params["giro_base"])
+        giro_media3 = _giro_mensal(r, params["giro_base"])
+        serie_am = (venda_mensal_map or {}).get(cod)
+        giro_forecast = previsao_giro_mensal(serie_am, fc_meses, hoje) if forecast_on else None
+        if forecast_on and giro_forecast is not None:
+            giro_mes, giro_fonte = giro_forecast, "forecast"
+        else:
+            giro_mes, giro_fonte = giro_media3, "media3"
         giro_dia = giro_mes / 30.0
         serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
+        # série mensal (até 12 últimos meses, ordem cronológica) p/ sparkline do 360°
+        serie_mensal = ([_round(_n(serie_am.get(am))) for am in reversed(_meses_anteriores(hoje, 12))]
+                        if serie_am else None)
 
         cobertura = (qtdisp / giro_dia) if giro_dia > 0 and qtdisp > 0 else None
 
@@ -226,6 +263,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "custo_unit": _round(custofin, 4),
             "valor": _round(valor),
             "giro_mes": _round(giro_mes), "giro_dia": _round(giro_dia, 3),
+            "giro_media3": _round(giro_media3), "giro_forecast": _round(giro_forecast) if giro_forecast is not None else None,
+            "giro_fonte": giro_fonte, "serie_mensal": serie_mensal,
             "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
             "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
             "margem": _round(margem * 100, 1) if margem is not None else None,
@@ -502,3 +541,61 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
         })
     out.sort(key=lambda x: x["dias_para_vencer"])
     return out
+
+
+# ───────────────────────── plano de reposição (time-phased / DRP) ─────────────────────────
+def plano_reposicao(p, params, hoje=None, semanas=12):
+    """Grade DRP semanal de um produto: projeta o saldo semana a semana, gera pedidos
+    planejados quando cruza o estoque de segurança e calcula QUANDO o pedido precisa SAIR
+    (liberação = recebimento − lead time).
+
+    Ressalva: sem dados de trânsito no BI (QTTRANSITO=0) → inbound só pelo pendente (raro);
+    demanda tratada como constante (giro/dia). Tudo herda o giro escolhido (forecast/média3)."""
+    hoje = hoje or date.today()
+    giro_dia = p.get("giro_dia") or 0
+    dem_sem = giro_dia * 7.0
+    seg = p.get("est_seguranca") or 0
+    alvo = p.get("est_alvo") or 0
+    custo = p.get("custo_unit") or 0
+    lead = p.get("lead_efetivo") or params.get("lead_time", 10)
+    lead_sem = max(1, math.ceil(lead / 7.0))
+    receb_prog_total = (p.get("qttransito") or 0) + (p.get("qtpend") or 0)
+
+    if giro_dia <= 0:
+        return {"semanas": [], "liberacoes": [], "inbound_zero": receb_prog_total <= 0,
+                "lead_semanas": lead_sem, "sem_giro": True}
+
+    saldo = p.get("qtdisp") or 0
+    grade, liberacoes = [], []
+    for s in range(1, semanas + 1):
+        receb_prog = receb_prog_total if s == lead_sem else 0.0
+        saldo = saldo - dem_sem + receb_prog
+        receb_plan = 0.0
+        if saldo < seg:
+            receb_plan = max(0.0, round(alvo - saldo))
+            saldo += receb_plan
+            sem_lib = max(0, s - lead_sem)
+            liberacoes.append({
+                "semana": sem_lib,
+                "data": (hoje + timedelta(days=sem_lib * 7)).isoformat(),
+                "qt": _round(receb_plan),
+                "valor": _round(receb_plan * custo),
+            })
+        grade.append({
+            "semana": s,
+            "data_ini": (hoje + timedelta(days=(s - 1) * 7)).isoformat(),
+            "demanda": _round(dem_sem),
+            "receb_prog": _round(receb_prog),
+            "receb_plan": _round(receb_plan),
+            "saldo_proj": _round(saldo),
+            "abaixo_seg": saldo < seg,
+        })
+    return {
+        "semanas": grade,
+        "liberacoes": liberacoes,
+        "estoque_seguranca": _round(seg),
+        "estoque_alvo": _round(alvo),
+        "lead_semanas": lead_sem,
+        "inbound_zero": receb_prog_total <= 0,
+        "sem_giro": False,
+    }

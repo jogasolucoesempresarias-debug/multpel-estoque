@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'endereco', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
-  params:{lead:10,seg:25,cob:45,hor:30},
+  params:{lead:10,seg:25,cob:45,hor:30,forecast:0,fcmeses:6},
   charts:{}, sort:{},
 };
 
@@ -54,6 +54,7 @@ function serverQS(){
   p.set('venda_periodo', S.vperiodo);
   p.set('lead_time', S.params.lead); p.set('dias_seguranca', S.params.seg);
   p.set('cobertura_total', S.params.cob); p.set('horizonte_val', S.params.hor);
+  p.set('forecast', S.params.forecast?1:0); p.set('forecast_meses', S.params.fcmeses);
   return p.toString();
 }
 
@@ -266,6 +267,45 @@ function renderReposicao(P){
   el.querySelectorAll('[data-fornped]').forEach(b=>b.onclick=()=>{ const gr=grupos.find(x=>String(x.cod)===b.dataset.fornped); modalPedidoFornecedor(gr); });
 }
 
+async function renderPlano(){
+  const el=$('#v-plano');
+  el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando plano de reposição…</div>`;
+  let j; try{ j=await getJSON('/api/plano_reposicao?'+serverQS()); }
+  catch(e){ el.innerHTML=`<div class="empty">Falha ao montar o plano: ${esc(e.message)}</div>`; return; }
+  // filtro client por comprador (igual às demais views)
+  let itens=j.itens||[];
+  if(S.cli.comprador) itens=itens.filter(p=>String(p.codcomprador)===S.cli.comprador);
+  // explode liberações em buckets por semana
+  const buckets={};
+  itens.forEach(p=>p.liberacoes.forEach(l=>{(buckets[l.semana]=buckets[l.semana]||[]).push({...p,...l});}));
+  const semanas=Object.keys(buckets).map(Number).sort((a,b)=>a-b);
+  const fonteLbl=S.params.forecast?`forecast (RCA, ${S.params.fcmeses}m)`:'média 3m (oficial)';
+  const totAgora=(buckets[0]||[]).reduce((s,x)=>s+(x.valor||0),0);
+  const totFuturo=semanas.filter(w=>w>0).reduce((s,w)=>s+buckets[w].reduce((a,x)=>a+(x.valor||0),0),0);
+  let html=`<h2 class="section"><span>Plano de reposição no tempo</span></h2>
+    <div class="count-line">Saldo projetado semana a semana (demanda = giro/dia · ${fonteLbl}). Mostra <b>quando o pedido precisa sair</b> = recebimento − lead time. Sem dados de trânsito no BI → todo reabastecimento é planejado.</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      ${kpi('Liberar agora (esta semana)',money(totAgora),int((buckets[0]||[]).length)+' itens',C.orange)}
+      ${kpi('Liberações futuras (12 sem.)',money(totFuturo),int(semanas.filter(w=>w>0).reduce((s,w)=>s+buckets[w].length,0))+' itens',C.accent)}
+      ${kpi('Itens no plano',int(itens.length),'com giro e sugestão',C.accent2)}
+    </div>`;
+  if(!semanas.length){ el.innerHTML=html+'<div class="empty">Nenhuma reposição necessária no horizonte 🎉</div>'; return; }
+  const hoje=new Date();
+  html+=semanas.map(w=>{
+    const lib=buckets[w].sort((a,b)=>b.valor-a.valor);
+    const tot=lib.reduce((s,x)=>s+(x.valor||0),0);
+    const dataLbl=new Date(hoje.getTime()+w*7*864e5).toLocaleDateString('pt-BR');
+    const titulo=w===0?'⚡ Sair agora (esta semana)':`Semana +${w} · a partir de ${dataLbl}`;
+    return `<div class="panel forn-grp">
+      <h3><span>${titulo} <small class="muted">· ${lib.length} itens</small></span><span>${money(tot)}</span></h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Qtd pedir</th><th class="num">Valor</th></tr></thead>
+      <tbody>${lib.map(x=>`<tr data-cod="${x.codprod}"><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao)}</span></td><td><span class="prod">${esc(x.fornecedor||'—')}</span></td><td class="num">${int(x.qtdisp)}</td><td class="num">${cob(x.cobertura)}</td><td class="num">${int(x.giro_mes)}</td><td class="num">${int(x.qt)}</td><td class="num">${money(x.valor)}</td></tr>`).join('')}</tbody></table></div>
+    </div>`;
+  }).join('');
+  el.innerHTML=html;
+  el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
+}
+
 function renderValidade(){
   const L=lotesFiltrados();
   const cols=[colCod,{key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`},
@@ -475,6 +515,31 @@ function modalPlano(it){
     await postJSON('/api/planos',d); S.planos[chave]=d; closeModal(); toast('Plano salvo ✓'); render(); };
 }
 
+/* ───────── plano de reposição (360°) ───────── */
+function planoDrawer(plano){
+  if(!plano||plano.sem_giro||!plano.semanas||!plano.semanas.length) return '';
+  const libs=plano.liberacoes||[];
+  const prox=libs[0];
+  const resumo=prox
+    ? `Próximo pedido: <b>${int(prox.qt)} un</b> (${money(prox.valor)}) — ${prox.semana===0?'<b>sair agora</b>':'liberar em '+dt(prox.data)+' (sem. +'+prox.semana+')'}`
+    : 'Sem necessidade de pedido no horizonte.';
+  return `<div class="d-sec">Plano no tempo (12 sem.)</div>
+    <div class="count-line">${resumo}${plano.inbound_zero?' · <span class="muted">sem trânsito no BI; reabastecimento planejado</span>':''}</div>
+    <div class="chart-box sm" style="height:170px"><canvas id="d-plano"></canvas></div>`;
+}
+function buildPlanoChart(plano){
+  if(!plano||plano.sem_giro||!plano.semanas||!plano.semanas.length) return;
+  const W=plano.semanas, seg=plano.estoque_seguranca||0;
+  const labels=W.map(w=>'S'+w.semana);
+  const saldo=W.map(w=>w.saldo_proj), receb=W.map(w=>(w.receb_prog||0)+(w.receb_plan||0));
+  chart('d-plano',{data:{labels,datasets:[
+      {type:'bar',label:'Recebimentos',data:receb,backgroundColor:C.accent2,borderRadius:4,order:2},
+      {type:'line',label:'Saldo projetado',data:saldo,borderColor:C.accent,backgroundColor:'transparent',tension:.25,pointRadius:2,order:1},
+      {type:'line',label:'Estoque segurança',data:W.map(()=>seg),borderColor:C.orange,borderDash:[5,4],pointRadius:0,borderWidth:1.5,order:0},
+    ]},options:{plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:9}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+int(c.raw)}}},
+      scales:{y:{beginAtZero:false,ticks:{callback:v=>int(v)}}}}});
+}
+
 /* ───────── produto 360 ───────── */
 async function openProduto(cod){
   const ov=$('#overlay'),dr=$('#drawer'); ov.classList.add('on'); dr.classList.add('on'); dr.innerHTML='<div class="loader"><div class="spinner"></div></div>';
@@ -489,10 +554,11 @@ async function openProduto(cod){
       <div class="d-kpis">
         <div class="d-kpi"><div class="l">Disponível</div><div class="v">${int(p.qtdisp)}</div></div>
         <div class="d-kpi"><div class="l">Valor</div><div class="v">${money(p.valor)}</div></div>
-        <div class="d-kpi"><div class="l">Giro/mês ${spark(p.serie_giro)}</div><div class="v">${int(p.giro_mes)}</div></div>
+        <div class="d-kpi"><div class="l">Giro/mês ${spark((p.serie_mensal&&p.serie_mensal.length?p.serie_mensal:p.serie_giro))}</div><div class="v">${int(p.giro_mes)}</div></div>
         <div class="d-kpi"><div class="l">Cobertura</div><div class="v">${cob(p.cobertura)}</div></div>
       </div>
       <div class="bar"><i style="width:${cobPct}%"></i></div>
+      ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
@@ -506,10 +572,12 @@ async function openProduto(cod){
       <div class="lote-row"><span>Ponto de pedido</span><span>${int(p.rop)}</span></div>
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
       <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${int(p.sugestao_compra)}</b></span></div>
+      ${planoDrawer(p.plano)}
       <div class="d-sec">Lotes / validade</div>
       ${lotes.length?lotes.map(l=>`<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>`).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
       ${(p.sugestao_compra||0)>0?`<div class="m-acts"><button class="btn primary" id="d-pedido">Registrar pedido</button></div>`:''}`;
     wireDrawer(); if($('#d-pedido'))$('#d-pedido').onclick=()=>{closeDrawer();modalPedido(p);};
+    buildPlanoChart(p.plano);
   }catch(e){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Erro: '+e.message+'</div>'; wireDrawer(); }
 }
 function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
@@ -521,6 +589,7 @@ function render(){
   $('#v-'+S.view).classList.add('active');
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===S.view));
   if(S.view==='orcamento'){ renderOrcamento(); return; }
+  if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   const P=filtered();
   ({fila:renderFila,cockpit:renderCockpit,ruptura:renderRuptura,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos}[S.view])(P);
   savePrefs();
@@ -547,6 +616,9 @@ async function init(){
   $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',o.dataset.v===S.base));
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
+  $('#p-fcmeses').value=S.params.fcmeses;
+  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===(S.params.forecast?1:0)));
+  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.params.forecast=+o.dataset.v;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
 
   // comprador → client filter + define visão inicial
   $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.selectedOptions[0]?.textContent||''; if(e.target.value&&S.view==='cockpit')S.view='fila'; render(); };
@@ -566,7 +638,7 @@ async function init(){
     $('#f-busca').value='';
     render();
   };
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value};loadData();};
+  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,forecast:S.params.forecast?1:0,fcmeses:+$('#p-fcmeses').value||6};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});

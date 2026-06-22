@@ -195,6 +195,31 @@ def _vendas_map(periodo, hoje):
     return m
 
 
+def _vendas_mensal_map(meses, hoje):
+    """{cod: {AnoMes: qtd}} — venda mensal (QT) do RCA p/ o forecast. Cache 12h.
+    Degrada p/ {} se RCA indisponível. Só chamada quando forecast está ligado."""
+    meses = max(1, int(meses))
+    ini = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)  # 1º dia do mês anterior
+    for _ in range(meses):
+        ini = (ini - timedelta(days=1)).replace(day=1)
+    key = f"vmes:{meses}:{hoje.strftime('%Y-%m')}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    m = {}
+    try:
+        for r in pbi.run_dax_rca(Q.q_vendas_mensal_rca(ini)):
+            c = int(core._n(r["CODPROD"]))
+            am = int(core._n(r.get("AM")))
+            if am:
+                m.setdefault(c, {})[am] = core._n(r.get("qtd"))
+    except Exception as e:
+        print(f"[forecast] RCA mensal indisponível ({e}). Forecast desabilitado.")
+        m = {}
+    pbi._CACHE.set(key, m, 43200)  # 12h
+    return m
+
+
 def _build_produtos():
     """Constrói a lista enriquecida de produtos para os filtros/params atuais."""
     filiais = _filiais_param()
@@ -205,7 +230,9 @@ def _build_produtos():
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje())
-    produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params, hoje=_hoje())
+    venda_mensal = _vendas_mensal_map(params["forecast_meses"], _hoje()) if params.get("forecast") else None
+    produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
+                                       hoje=_hoje(), venda_mensal_map=venda_mensal)
     return produtos, params, filiais
 
 
@@ -296,7 +323,32 @@ def api_produto(codprod):
     p = idx.get(codprod)
     lotes_raw = pbi.run_dax(Q.q_lotes_produto(codprod, filiais))
     lotes = core.validade_fefo(lotes_raw, idx, params, hoje=_hoje()) if p else []
+    if p:
+        p = {**p, "plano": core.plano_reposicao(p, params, hoje=_hoje())}
     return jsonify({"ok": bool(p), "produto": p, "lotes": lotes})
+
+
+@app.route("/api/plano_reposicao")
+def api_plano_reposicao():
+    """Plano DRP de todos os produtos com giro>0 e sugestão>0 — alimenta a aba 'Plano reposição'."""
+    produtos, params, _ = _build_produtos()
+    hoje = _hoje()
+    itens = []
+    for p in produtos:
+        if (p.get("giro_dia") or 0) <= 0 or (p.get("sugestao_compra") or 0) <= 0:
+            continue
+        plano = core.plano_reposicao(p, params, hoje=hoje)
+        if not plano["liberacoes"]:
+            continue
+        itens.append({
+            "codprod": p["codprod"], "descricao": p["descricao"],
+            "codfornec": p["codfornec"], "fornecedor": p["fornecedor"],
+            "comprador": p.get("comprador"), "qtdisp": p["qtdisp"],
+            "cobertura": p["cobertura"], "giro_mes": p["giro_mes"],
+            "custo_unit": p["custo_unit"], "lead_efetivo": p["lead_efetivo"],
+            "liberacoes": plano["liberacoes"],
+        })
+    return jsonify({"ok": True, "gerado_em": hoje.isoformat(), "n": len(itens), "itens": itens})
 
 
 # ───────────────────────── export CSV ─────────────────────────
