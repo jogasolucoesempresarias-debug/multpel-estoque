@@ -33,6 +33,8 @@ DEFAULTS = {
     "xyz_y":            1.0,
     "forecast":         0,         # 1 = giro vem do forecast (RCA mensal); 0 = média3 oficial
     "forecast_meses":   6,         # janela da média móvel simples do forecast bruto
+    "forecast_sazonal": 0,         # 1 = aplica fator sazonal ano-a-ano (implica forecast on)
+    "arredonda_cx":     1,         # 1 = arredonda sugestão/pedido p/ caixa fechada (QTUNITCX)
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
@@ -100,6 +102,41 @@ def previsao_giro_mensal(serie_am, meses, hoje):
     return round(total / len(chaves)) if chaves else None
 
 
+def fatores_sazonais(serie_am, hoje, janela=24, min_meses=12):
+    """Índices sazonais ano-a-ano a partir da venda mensal (RCA).
+    media_mensal = média dos últimos `janela` meses (naturalmente dessazonalizada);
+    fator[m] = média do mês-calendário m ÷ media_mensal, clampado a [0.3, 3.0].
+    Retorna {"media_mensal", "fatores": {1..12}} ou None se histórico < min_meses."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(janela))
+    com_dado = [am for am in chaves if am in serie_am]
+    if len(com_dado) < int(min_meses):
+        return None
+    media_mensal = sum(_n(serie_am.get(am)) for am in chaves) / len(chaves)
+    if media_mensal <= 0:
+        return None
+    fatores = {}
+    for m in range(1, 13):
+        obs = [_n(serie_am.get(am)) for am in chaves if am % 100 == m and am in serie_am]
+        fatores[m] = max(0.3, min(3.0, (sum(obs) / len(obs)) / media_mensal)) if obs else 1.0
+    return {"media_mensal": media_mensal, "fatores": fatores}
+
+
+def previsao_giro_sazonal(saz, mes):
+    """Giro mensal previsto p/ um mês-calendário: nível dessazonalizado × fator do mês."""
+    return round(saz["media_mensal"] * saz["fatores"].get(mes, 1.0))
+
+
+def arredonda_caixa(qt, qtunitcx):
+    """Arredonda `qt` PRA CIMA em caixas fechadas. Retorna (qt_arredondado, n_caixas).
+    No-op (qt, None) se qtunitcx<=1 ou qt<=0."""
+    if not qtunitcx or qtunitcx <= 1 or qt <= 0:
+        return qt, None
+    cx = math.ceil(qt / qtunitcx)
+    return cx * qtunitcx, cx
+
+
 def _round(v, n=2):
     return round(v, n) if isinstance(v, (int, float)) else v
 
@@ -114,7 +151,9 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
     hoje = hoje or date.today()
     base = params["base_estoque"]
     forecast_on = bool(params.get("forecast"))
+    sazonal_on = bool(params.get("forecast_sazonal")) and forecast_on
     fc_meses = int(params.get("forecast_meses", 6))
+    arred_cx = bool(params.get("arredonda_cx"))
     out = []
     for r in snapshot:
         cod = int(_n(r.get("CODPROD")))
@@ -140,7 +179,12 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         giro_media3 = _giro_mensal(r, params["giro_base"])
         serie_am = (venda_mensal_map or {}).get(cod)
         giro_forecast = previsao_giro_mensal(serie_am, fc_meses, hoje) if forecast_on else None
-        if forecast_on and giro_forecast is not None:
+        saz = fatores_sazonais(serie_am, hoje) if sazonal_on else None
+        nivel_base_dia = None
+        if saz is not None:
+            giro_mes, giro_fonte = previsao_giro_sazonal(saz, hoje.month), "sazonal"
+            nivel_base_dia = saz["media_mensal"] / 30.0
+        elif forecast_on and giro_forecast is not None:
             giro_mes, giro_fonte = giro_forecast, "forecast"
         else:
             giro_mes, giro_fonte = giro_media3, "media3"
@@ -245,6 +289,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             cv, xyz = None, None
 
         qtunitcx = _n(cad.get("QTUNITCX"))
+        # arredondamento da sugestão p/ caixa fechada (QTUNITCX), quando ligado
+        sugestao_bruta = sugestao
+        sugestao_un, sugestao_cx = (arredonda_caixa(sugestao, qtunitcx) if arred_cx else (sugestao, None))
+        sugestao = sugestao_un
         out.append({
             "codprod": cod,
             "descricao": cad.get("DESCRICAO") or f"PRODUTO {cod}",
@@ -265,6 +313,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "giro_mes": _round(giro_mes), "giro_dia": _round(giro_dia, 3),
             "giro_media3": _round(giro_media3), "giro_forecast": _round(giro_forecast) if giro_forecast is not None else None,
             "giro_fonte": giro_fonte, "serie_mensal": serie_mensal,
+            "nivel_base_dia": _round(nivel_base_dia, 3) if nivel_base_dia is not None else None,
+            "fatores_sazonais": saz["fatores"] if saz else None,
             "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
             "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
             "margem": _round(margem * 100, 1) if margem is not None else None,
@@ -277,6 +327,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "lead_efetivo": _round(lead),
             "rop": _round(rop), "est_seguranca": _round(est_seg),
             "est_alvo": _round(est_alvo), "sugestao_compra": _round(sugestao),
+            "sugestao_bruta": _round(sugestao_bruta), "sugestao_cx": sugestao_cx,
             "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,
             "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,
@@ -549,41 +600,57 @@ def plano_reposicao(p, params, hoje=None, semanas=12):
     planejados quando cruza o estoque de segurança e calcula QUANDO o pedido precisa SAIR
     (liberação = recebimento − lead time).
 
-    Ressalva: sem dados de trânsito no BI (QTTRANSITO=0) → inbound só pelo pendente (raro);
-    demanda tratada como constante (giro/dia). Tudo herda o giro escolhido (forecast/média3)."""
+    Ressalva: sem dados de trânsito no BI (QTTRANSITO=0) → inbound só pelo pendente (raro).
+    Demanda herda o giro escolhido (média3/forecast); no modo sazonal varia por mês na grade."""
     hoje = hoje or date.today()
     giro_dia = p.get("giro_dia") or 0
-    dem_sem = giro_dia * 7.0
     seg = p.get("est_seguranca") or 0
     alvo = p.get("est_alvo") or 0
     custo = p.get("custo_unit") or 0
     lead = p.get("lead_efetivo") or params.get("lead_time", 10)
     lead_sem = max(1, math.ceil(lead / 7.0))
     receb_prog_total = (p.get("qttransito") or 0) + (p.get("qtpend") or 0)
+    # sazonalidade: demanda da semana varia pelo mês quando há fatores; senão constante
+    nivel_base_dia = p.get("nivel_base_dia")
+    fatores = p.get("fatores_sazonais")
+    # caixa fechada: arredonda o pedido planejado p/ múltiplo de QTUNITCX
+    arred = bool(params.get("arredonda_cx")) and (p.get("qtunitcx") or 0) > 1
+    qtcx = p.get("qtunitcx") or 0
 
     if giro_dia <= 0:
         return {"semanas": [], "liberacoes": [], "inbound_zero": receb_prog_total <= 0,
                 "lead_semanas": lead_sem, "sem_giro": True}
 
+    def _dem_sem(data_ini):
+        if nivel_base_dia and fatores:
+            return nivel_base_dia * (fatores.get(data_ini.month) or fatores.get(str(data_ini.month)) or 1.0) * 7.0
+        return giro_dia * 7.0
+
     saldo = p.get("qtdisp") or 0
     grade, liberacoes = [], []
     for s in range(1, semanas + 1):
+        data_ini = hoje + timedelta(days=(s - 1) * 7)
+        dem_sem = _dem_sem(data_ini)
         receb_prog = receb_prog_total if s == lead_sem else 0.0
         saldo = saldo - dem_sem + receb_prog
         receb_plan = 0.0
         if saldo < seg:
             receb_plan = max(0.0, round(alvo - saldo))
+            n_cx = None
+            if arred and receb_plan > 0:
+                receb_plan, n_cx = arredonda_caixa(receb_plan, qtcx)
             saldo += receb_plan
             sem_lib = max(0, s - lead_sem)
             liberacoes.append({
                 "semana": sem_lib,
                 "data": (hoje + timedelta(days=sem_lib * 7)).isoformat(),
                 "qt": _round(receb_plan),
+                "qt_cx": n_cx,
                 "valor": _round(receb_plan * custo),
             })
         grade.append({
             "semana": s,
-            "data_ini": (hoje + timedelta(days=(s - 1) * 7)).isoformat(),
+            "data_ini": data_ini.isoformat(),
             "demanda": _round(dem_sem),
             "receb_prog": _round(receb_prog),
             "receb_plan": _round(receb_plan),

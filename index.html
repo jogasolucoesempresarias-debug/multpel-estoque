@@ -66,12 +66,19 @@
     <div class="fb-group"><label>Demanda (giro)</label>
       <div class="seg" id="p-forecast">
         <span class="seg-opt on" data-v="0">Média 3m (oficial)</span>
-        <span class="seg-opt" data-v="1">Forecast (RCA)</span>
+        <span class="seg-opt" data-v="1">Forecast</span>
+        <span class="seg-opt" data-v="2">Forecast sazonal</span>
       </div>
     </div>
     <div class="fb-group"><label>Janela forecast (meses)</label><input type="number" id="p-fcmeses" value="6" min="1" max="24" style="width:80px"></div>
+    <div class="fb-group"><label>Arredondar p/ caixa</label>
+      <div class="seg" id="p-arredcx">
+        <span class="seg-opt on" data-v="1">Caixa fechada</span>
+        <span class="seg-opt" data-v="0">Unidade</span>
+      </div>
+    </div>
   </div>
-  <div class="count-line">Giro = média 3m (oficial do TI) ou forecast = média móvel simples da venda real (RCA) na janela. Estoque endereçado = WMS filiais 3+5.</div>
+  <div class="count-line">Giro: média 3m (oficial do TI) · forecast = média móvel da venda real (RCA) · sazonal = + fator do mês (ano-a-ano, 24m). Caixa fechada = sugestão arredondada pra cima em caixas (QTUNITCX).</div>
 </div>
 
 <div class="tabs" id="tabs">

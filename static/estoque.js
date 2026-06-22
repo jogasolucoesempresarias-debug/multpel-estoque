@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'endereco', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
-  params:{lead:10,seg:25,cob:45,hor:30,forecast:0,fcmeses:6},
+  params:{lead:10,seg:25,cob:45,hor:30,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{},
 };
 
@@ -28,6 +28,8 @@ const int = v => v==null ? '—' : new Intl.NumberFormat('pt-BR',{maximumFractio
 const dec = (v,d=1) => v==null ? '—' : new Intl.NumberFormat('pt-BR',{maximumFractionDigits:d}).format(v);
 const pct = v => v==null ? '—' : new Intl.NumberFormat('pt-BR',{style:'percent',maximumFractionDigits:1}).format(v);
 const cob = v => v==null ? '∞' : dec(v,0)+'d';
+// sugestão em caixas fechadas quando há QTUNITCX>1: "4 cx · 48 un"
+const sugCx = (un, qtcx) => un==null ? '—' : ((qtcx>1 && un>0) ? `${int(Math.ceil(un/qtcx))} cx · ${int(un)} un` : int(un));
 const dt = s => s ? s.split('-').reverse().join('/') : '—';
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = (v,txt) => v==null||v===''?'':`<span class="badge b-${String(v).replace(/[^a-z0-9_-]/gi,'')}">${esc(txt!=null?txt:v)}</span>`;
@@ -55,6 +57,7 @@ function serverQS(){
   p.set('lead_time', S.params.lead); p.set('dias_seguranca', S.params.seg);
   p.set('cobertura_total', S.params.cob); p.set('horizonte_val', S.params.hor);
   p.set('forecast', S.params.forecast?1:0); p.set('forecast_meses', S.params.fcmeses);
+  p.set('forecast_sazonal', S.params.sazonal?1:0); p.set('arredonda_cx', S.params.arredondacx?1:0);
   return p.toString();
 }
 
@@ -255,7 +258,7 @@ function renderReposicao(P){
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Sugerido</th><th class="num">Valor</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura||0)-(b.cobertura||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${cob(p.cobertura)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td><td class="num">${money((p.sugestao_compra||0)*(p.custo_unit||0))}</td></tr>`).join('')}</tbody></table></div>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura||0)-(b.cobertura||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${cob(p.cobertura)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCx(p.sugestao_compra,p.qtunitcx)}</td><td class="num">${money((p.sugestao_compra||0)*(p.custo_unit||0))}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
@@ -279,7 +282,7 @@ async function renderPlano(){
   const buckets={};
   itens.forEach(p=>p.liberacoes.forEach(l=>{(buckets[l.semana]=buckets[l.semana]||[]).push({...p,...l});}));
   const semanas=Object.keys(buckets).map(Number).sort((a,b)=>a-b);
-  const fonteLbl=S.params.forecast?`forecast (RCA, ${S.params.fcmeses}m)`:'média 3m (oficial)';
+  const fonteLbl=S.params.sazonal?'forecast sazonal (RCA, 24m)':(S.params.forecast?`forecast (RCA, ${S.params.fcmeses}m)`:'média 3m (oficial)');
   const totAgora=(buckets[0]||[]).reduce((s,x)=>s+(x.valor||0),0);
   const totFuturo=semanas.filter(w=>w>0).reduce((s,w)=>s+buckets[w].reduce((a,x)=>a+(x.valor||0),0),0);
   let html=`<h2 class="section"><span>Plano de reposição no tempo</span></h2>
@@ -299,7 +302,7 @@ async function renderPlano(){
     return `<div class="panel forn-grp">
       <h3><span>${titulo} <small class="muted">· ${lib.length} itens</small></span><span>${money(tot)}</span></h3>
       <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Qtd pedir</th><th class="num">Valor</th></tr></thead>
-      <tbody>${lib.map(x=>`<tr data-cod="${x.codprod}"><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao)}</span></td><td><span class="prod">${esc(x.fornecedor||'—')}</span></td><td class="num">${int(x.qtdisp)}</td><td class="num">${cob(x.cobertura)}</td><td class="num">${int(x.giro_mes)}</td><td class="num">${int(x.qt)}</td><td class="num">${money(x.valor)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${lib.map(x=>`<tr data-cod="${x.codprod}"><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao)}</span></td><td><span class="prod">${esc(x.fornecedor||'—')}</span></td><td class="num">${int(x.qtdisp)}</td><td class="num">${cob(x.cobertura)}</td><td class="num">${int(x.giro_mes)}</td><td class="num">${sugCx(x.qt,x.qtunitcx)}</td><td class="num">${money(x.valor)}</td></tr>`).join('')}</tbody></table></div>
     </div>`;
   }).join('');
   el.innerHTML=html;
@@ -559,6 +562,7 @@ async function openProduto(cod){
       </div>
       <div class="bar"><i style="width:${cobPct}%"></i></div>
       ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
+      ${p.giro_fonte==='sazonal'?`<div class="count-line">Giro por <b>forecast sazonal (RCA, 24m)</b>: ${int(p.giro_mes)}/mês${p.fatores_sazonais?` · fator do mês ${dec(p.fatores_sazonais[new Date().getMonth()+1]||1,2)}×`:''} · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
@@ -571,7 +575,7 @@ async function openProduto(cod){
       <div class="d-sec">Reposição (lead ${int(p.lead_efetivo)}d)</div>
       <div class="lote-row"><span>Ponto de pedido</span><span>${int(p.rop)}</span></div>
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
-      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${int(p.sugestao_compra)}</b></span></div>
+      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCx(p.sugestao_compra,p.qtunitcx)}</b></span></div>
       ${planoDrawer(p.plano)}
       <div class="d-sec">Lotes / validade</div>
       ${lotes.length?lotes.map(l=>`<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>`).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
@@ -617,8 +621,11 @@ async function init(){
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
   $('#p-fcmeses').value=S.params.fcmeses;
-  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===(S.params.forecast?1:0)));
-  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.params.forecast=+o.dataset.v;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
+  const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
+  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
+  $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
+  $('#p-arredcx').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===(S.params.arredondacx?1:0)));
+  $('#p-arredcx').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.params.arredondacx=+o.dataset.v;$('#p-arredcx').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
 
   // comprador → client filter + define visão inicial
   $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.selectedOptions[0]?.textContent||''; if(e.target.value&&S.view==='cockpit')S.view='fila'; render(); };
@@ -638,7 +645,7 @@ async function init(){
     $('#f-busca').value='';
     render();
   };
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,forecast:S.params.forecast?1:0,fcmeses:+$('#p-fcmeses').value||6};loadData();};
+  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});

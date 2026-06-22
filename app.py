@@ -195,14 +195,15 @@ def _vendas_map(periodo, hoje):
     return m
 
 
-def _vendas_mensal_map(meses, hoje):
+def _vendas_mensal_map(meses, hoje, profundo=False):
     """{cod: {AnoMes: qtd}} — venda mensal (QT) do RCA p/ o forecast. Cache 12h.
-    Degrada p/ {} se RCA indisponível. Só chamada quando forecast está ligado."""
-    meses = max(1, int(meses))
+    Degrada p/ {} se RCA indisponível. Só chamada quando forecast está ligado.
+    profundo=True (sazonalidade) força ≥25 meses de histórico p/ o fator ano-a-ano."""
+    fetch = max(25, int(meses)) if profundo else max(1, int(meses))
     ini = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)  # 1º dia do mês anterior
-    for _ in range(meses):
+    for _ in range(fetch):
         ini = (ini - timedelta(days=1)).replace(day=1)
-    key = f"vmes:{meses}:{hoje.strftime('%Y-%m')}"
+    key = f"vmes:{fetch}:{hoje.strftime('%Y-%m')}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -230,7 +231,8 @@ def _build_produtos():
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje())
-    venda_mensal = _vendas_mensal_map(params["forecast_meses"], _hoje()) if params.get("forecast") else None
+    venda_mensal = (_vendas_mensal_map(params["forecast_meses"], _hoje(), profundo=bool(params.get("forecast_sazonal")))
+                    if params.get("forecast") else None)
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal)
     return produtos, params, filiais
@@ -346,6 +348,7 @@ def api_plano_reposicao():
             "comprador": p.get("comprador"), "qtdisp": p["qtdisp"],
             "cobertura": p["cobertura"], "giro_mes": p["giro_mes"],
             "custo_unit": p["custo_unit"], "lead_efetivo": p["lead_efetivo"],
+            "qtunitcx": p.get("qtunitcx"), "giro_fonte": p.get("giro_fonte"),
             "liberacoes": plano["liberacoes"],
         })
     return jsonify({"ok": True, "gerado_em": hoje.isoformat(), "n": len(itens), "itens": itens})
