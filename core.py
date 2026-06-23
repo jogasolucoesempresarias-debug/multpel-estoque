@@ -243,17 +243,19 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             else:
                 status_ruptura = None
 
-        # estoque parado / dead stock — por dias sem venda
+        # estoque parado / dead stock — por dias sem venda.
+        # Campo único "parado_atencao" (X) define o corte; níveis ancorados em X, X+30, X+60.
         sem_giro = giro_dia <= 0 and qtdisp > 0
+        pa = params["parado_atencao"]
         if qtdisp <= 0:
             status_parado = None
         elif dias_sem_venda is None:
             status_parado = "muito_critico"
-        elif dias_sem_venda >= params["parado_mcritico"]:
+        elif dias_sem_venda >= pa + 60:
             status_parado = "muito_critico"
-        elif dias_sem_venda >= params["parado_critico"]:
+        elif dias_sem_venda >= pa + 30:
             status_parado = "critico"
-        elif dias_sem_venda >= params["parado_atencao"]:
+        elif dias_sem_venda >= pa:
             status_parado = "atencao"
         else:
             status_parado = None

@@ -15,8 +15,8 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'endereco', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
-  params:{lead:10,seg:25,cob:45,hor:30,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
-  charts:{}, sort:{},
+  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
+  charts:{}, sort:{}, paradoMin:0,
 };
 
 /* ───────── helpers ───────── */
@@ -56,6 +56,7 @@ function serverQS(){
   p.set('venda_periodo', S.vperiodo);
   p.set('lead_time', S.params.lead); p.set('dias_seguranca', S.params.seg);
   p.set('cobertura_total', S.params.cob); p.set('horizonte_val', S.params.hor);
+  p.set('parado_atencao', S.params.parado);
   p.set('forecast', S.params.forecast?1:0); p.set('forecast_meses', S.params.fcmeses);
   p.set('forecast_sazonal', S.params.sazonal?1:0); p.set('arredonda_cx', S.params.arredondacx?1:0);
   return p.toString();
@@ -275,9 +276,9 @@ async function renderPlano(){
   el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando plano de reposição…</div>`;
   let j; try{ j=await getJSON('/api/plano_reposicao?'+serverQS()); }
   catch(e){ el.innerHTML=`<div class="empty">Falha ao montar o plano: ${esc(e.message)}</div>`; return; }
-  // filtro client por comprador (igual às demais views)
-  let itens=j.itens||[];
-  if(S.cli.comprador) itens=itens.filter(p=>String(p.codcomprador)===S.cli.comprador);
+  // aplica TODOS os filtros client (fornecedor, comprador, curva, XYZ, depto, busca) via filtered()
+  const allow=new Set(filtered().map(p=>p.codprod));
+  let itens=(j.itens||[]).filter(p=>allow.has(p.codprod));
   // explode liberações em buckets por semana
   const buckets={};
   itens.forEach(p=>p.liberacoes.forEach(l=>{(buckets[l.semana]=buckets[l.semana]||[]).push({...p,...l});}));
@@ -330,20 +331,31 @@ function renderValidade(){
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)
   const sk=S.sort[view]||{key:'dias_para_vencer',dir:1};
   const rows=[...P].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=Infinity;if(y==null)y=Infinity;if(typeof x==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
-  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}</th>`).join('');
+  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${sk.key===c.key?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
   const body=rows.slice(0,300).map(p=>`<tr data-cod="${p.codprod}">`+cols.map(c=>{let v=p[c.key];if(c.badge)return`<td>${badge(v,c.map?c.map(v):v)}</td>`;if(c.html)return`<td>${c.html(p)}</td>`;if(c.fmt)v=c.fmt(v,p);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
-  setTimeout(()=>{document.querySelectorAll('#val-tbl tbody tr').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact'))openProduto(tr.dataset.cod);});},0);
+  setTimeout(()=>{const cont=$('#val-tbl');if(!cont)return;
+    cont.querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[view]||{};S.sort[view]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
+    cont.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact'))openProduto(tr.dataset.cod);});
+  },0);
   return `<div class="count-line">${int(rows.length)} lotes</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function renderParado(P){
-  const par=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor);
-  const cols=[colCod,colProd,colForn,{key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'sem saída':int(v)},
+  const allPar=P.filter(p=>p.status_parado);
+  const cols=[colCod,colProd,colForn,{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
+    {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'sem saída':int(v)},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'valor',label:'Valor',num:true,fmt:money},
     {key:'status_saida',label:'Saída',badge:true},{key:'status_parado',label:'Classe',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
-  $('#v-parado').innerHTML=head('Estoque parado — o que liquidar','parado')+renderTable(par,cols,'parado');
-  wirePlanoCells();
+  // filtro rápido (client-side, instantâneo): sem venda ≥ X dias — "sem saída" sempre incluído
+  $('#v-parado').innerHTML=head('Estoque parado — o que liquidar','parado')
+    +`<div class="count-line">Filtro rápido — sem venda ≥ <input type="number" id="pq-parado" value="${S.paradoMin||''}" placeholder="0" style="width:72px"> dias</div>`
+    +`<div id="parado-tbl"></div>`;
+  const desenha=()=>{ const min=+($('#pq-parado').value)||0;
+    const par=allPar.filter(p=>p.dias_sem_venda==null||p.dias_sem_venda>=min).sort((a,b)=>b.valor-a.valor);
+    $('#parado-tbl').innerHTML=renderTable(par,cols,'parado'); wirePlanoCells(); };
+  $('#pq-parado').oninput=()=>{ S.paradoMin=+$('#pq-parado').value||0; desenha(); };
+  desenha();
 }
 
 function renderABCXYZ(P){
@@ -611,7 +623,7 @@ async function init(){
     S.filiaisSel=new Set(fsel);
     $('#f-filiais').innerHTML=f.filiais.map(x=>`<span class="chip ${S.filiaisSel.has(x)?'on':''}" data-f="${x}">${x}</span>`).join('');
     S.fornecedores=f.fornecedores||[];
-    $('#f-fornec').innerHTML+=f.fornecedores.map(o=>`<option value="${o.codfornec}">${esc(o.fornecedor)}</option>`).join('');
+    $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
     $('#f-comprador').innerHTML='<option value="">Empresa toda</option>'+f.compradores.filter(c=>c.codcomprador>0).map(c=>`<option value="${c.codcomprador}">${esc(c.comprador)}</option>`).join('');
     if(pr.comprador){ S.cli.comprador=pr.comprador; $('#f-comprador').value=pr.comprador; S.compradorNome=$('#f-comprador').selectedOptions[0]?.textContent||''; }
@@ -620,7 +632,7 @@ async function init(){
   $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',o.dataset.v===S.base));
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
-  $('#p-fcmeses').value=S.params.fcmeses;
+  $('#p-parado').value=S.params.parado; $('#p-fcmeses').value=S.params.fcmeses;
   const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
@@ -634,7 +646,13 @@ async function init(){
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};
   $('#f-curva').onchange=e=>{S.cli.curva=e.target.value;render();};
   $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};
-  $('#f-fornec').onchange=e=>{S.cli.fornec=e.target.value;render();};
+  $('#f-fornec').onchange=e=>{
+    const nome=(e.target.value||'').trim();
+    const m=nome?(S.fornecedores||[]).find(x=>(x.fornecedor||'').toLowerCase()===nome.toLowerCase()):null;
+    S.cli.fornec=m?String(m.codfornec):'';
+    if(nome&&!m) e.target.value='';   // texto sem correspondência → volta p/ Todos
+    render();
+  };
   $('#f-depto').onchange=e=>{S.cli.depto=e.target.value;render();};
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
@@ -645,11 +663,18 @@ async function init(){
     $('#f-busca').value='';
     render();
   };
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
+  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
   if(pr.view) S.view=pr.view;
+  setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
   loadData();
+}
+// altura real da topbar+filterbar (ambas sticky) → offset do cabeçalho congelado das tabelas
+function setStickTop(){
+  const tb=$('.topbar'), fb=$('.filterbar');
+  const h=(tb?tb.offsetHeight:0)+(fb?fb.offsetHeight:0);
+  if(h) document.documentElement.style.setProperty('--stick-top', h+'px');
 }
 init();

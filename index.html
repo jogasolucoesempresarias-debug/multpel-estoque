@@ -43,7 +43,8 @@
   <div class="fb-group"><label>XYZ</label>
     <select id="f-xyz" class="fb-control"><option value="">Todas</option><option>X</option><option>Y</option><option>Z</option></select></div>
   <div class="fb-group"><label>Fornecedor</label>
-    <select id="f-fornec" class="fb-control"><option value="">Todos</option></select></div>
+    <input type="text" id="f-fornec" class="fb-control" list="f-fornec-dl" autocomplete="off" placeholder="Todos / digite…" style="width:220px">
+    <datalist id="f-fornec-dl"></datalist></div>
   <div class="fb-group"><label>Depto</label>
     <select id="f-depto" class="fb-control"><option value="">Todos</option></select></div>
   <div class="fb-group grow"><label>Buscar produto</label>
@@ -60,6 +61,7 @@
     <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>
     <div class="fb-group"><label>Cobertura alvo (dias)</label><input type="number" id="p-cob" value="45" style="width:80px"></div>
     <div class="fb-group"><label>Horizonte validade (dias)</label><input type="number" id="p-hor" value="30" style="width:80px"></div>
+    <div class="fb-group"><label>Parado: dias sem venda</label><input type="number" id="p-parado" value="60" style="width:80px"></div>
     <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
   </div>
   <div class="row" style="margin-top:6px;border-top:1px solid var(--line,#1e293b);padding-top:10px">

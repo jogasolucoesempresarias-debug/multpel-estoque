@@ -131,12 +131,14 @@ h2.section { font-size: 1rem; margin: 4px 0 14px; font-weight: 700; }
 .chart-box.sm { height: 210px; }
 
 /* ───── tables ───── */
-.tbl-wrap { overflow-x: auto; border-radius: 11px; border: 1px solid var(--border); }
+.tbl-wrap { overflow: auto; max-height: calc(100vh - var(--stick-top, 120px) - 130px); border-radius: 11px; border: 1px solid var(--border); }
 table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 thead th {
   text-align: left; padding: 10px 12px; background: var(--surface2); color: var(--text-dim);
   font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .3px;
-  cursor: pointer; white-space: nowrap; position: sticky; top: 0;
+  cursor: pointer; white-space: nowrap;
+  position: sticky; top: 0; z-index: 30;
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 thead th:hover { color: var(--accent); }
 thead th.num, td.num { text-align: right; font-family: 'JetBrains Mono', monospace; }

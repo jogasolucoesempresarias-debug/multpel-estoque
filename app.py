@@ -265,10 +265,13 @@ def api_filtros():
         [{"codfornec": cf, "fornecedor": f.get("FORNECEDOR") or f"FORN {cf}"}
          for cf, f in forn_map.items()],
         key=lambda x: x["fornecedor"] or "")
-    # compradores que de fato têm fornecedores na base
+    # compradores responsáveis por COMPRA P/ REVENDA: só os ligados a fornecedores
+    # que têm produto revenda (deriva da base, sem nome chumbado). Remove PAGAR, etc.
     comp_map = _compradores_map()
-    cods = {int(core._n(f.get("CODCOMPRADOR"))) for f in forn_map.values()
-            if f.get("CODCOMPRADOR") not in (None, "")}
+    forns_revenda = {int(core._n(p.get("CODFORNEC"))) for p in prod_map.values()
+                     if p.get("CODFORNEC") not in (None, "")}
+    cods = {int(core._n(forn_map[cf].get("CODCOMPRADOR"))) for cf in forns_revenda
+            if cf in forn_map and forn_map[cf].get("CODCOMPRADOR") not in (None, "")}
     compradores = sorted(
         [{"codcomprador": c, "comprador": comp_map.get(c, f"COMPRADOR {c}")} for c in cods],
         key=lambda x: x["comprador"] or "")
@@ -363,7 +366,7 @@ _CSV_COLS = {
                       "lucro", "margem", "giro_mes", "cobertura", "dias_sem_venda"],
     "reposicao": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "giro_mes",
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
-    "parado": ["codprod", "descricao", "fornecedor", "comprador", "dias_sem_venda", "qtdisp",
+    "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
                "valor", "cobertura", "status_parado"],
     "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "cobertura",
                 "giro_mes", "sugestao_compra", "status_ruptura", "estoque_zero"],
