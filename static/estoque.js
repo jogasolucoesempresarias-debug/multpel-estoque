@@ -16,7 +16,7 @@ const S = {
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
-  charts:{}, sort:{}, paradoMin:0,
+  charts:{}, sort:{}, paradoMin:0, valFaixa:null,
 };
 
 /* ───────── helpers ───────── */
@@ -320,12 +320,19 @@ function renderValidade(){
   // faixas
   const faixas=[['0-15',0,15],['16-30',16,30],['31-60',31,60],['61-90',61,90],['90+',91,1e9]];
   const fd=faixas.map(([n,lo,hi])=>{const it=L.filter(l=>l.dias_para_vencer>=lo&&l.dias_para_vencer<=hi);return{n,qt:it.length,valor:it.reduce((s,l)=>s+(l.valor_risco||0),0)};});
+  // filtro pelo gráfico: clicar numa barra filtra a tabela por aquela faixa de dias
+  const Lf=S.valFaixa?L.filter(l=>l.dias_para_vencer>=S.valFaixa[0]&&l.dias_para_vencer<=S.valFaixa[1]):L;
+  const baseCols=[C.red,C.orange,C.yellow,C.accent,C.dim];
+  const barCols=baseCols.map((c,i)=>(!S.valFaixa||S.valFaixa[2]===faixas[i][0])?c:'rgba(100,116,139,.28)');
   const el=$('#v-validade');
   el.innerHTML=head(`Validade / FEFO — próximos ${S.params.hor} dias`,'validade')+
-    `<div class="row"><div class="panel grow" style="max-width:420px"><h3>Risco por faixa de dias</h3><div class="chart-box sm"><canvas id="ch-val"></canvas></div></div>
+    `<div class="row"><div class="panel grow" style="max-width:420px"><h3>Risco por faixa de dias <small class="muted">· clique p/ filtrar</small></h3><div class="chart-box sm"><canvas id="ch-val"></canvas></div></div>
      <div class="panel grow" id="val-tbl"></div></div>`;
-  $('#val-tbl').innerHTML=renderTableInline(L,cols,'validade');
-  chart('ch-val',{type:'bar',data:{labels:fd.map(f=>f.n),datasets:[{data:fd.map(f=>f.valor),backgroundColor:[C.red,C.orange,C.yellow,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+  $('#val-tbl').innerHTML=(S.valFaixa?`<div class="count-line">Filtrando faixa <b>${S.valFaixa[2]} dias</b> · <a href="#" id="val-clear">limpar</a></div>`:'')+renderTableInline(Lf,cols,'validade');
+  if(S.valFaixa){const c=$('#val-clear'); if(c)c.onclick=e=>{e.preventDefault();S.valFaixa=null;render();};}
+  chart('ch-val',{type:'bar',data:{labels:fd.map(f=>f.n),datasets:[{data:fd.map(f=>f.valor),backgroundColor:barCols,borderRadius:6}]},options:{
+    onClick:(ev,els)=>{if(!els||!els.length)return;const i=els[0].index,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();},
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   wirePlanoCells();
 }
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)
