@@ -16,7 +16,7 @@ const S = {
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
-  charts:{}, sort:{}, paradoMin:0, valFaixa:null,
+  charts:{}, sort:{}, valFaixa:null,
 };
 
 /* ───────── helpers ───────── */
@@ -146,7 +146,7 @@ const colProd={key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title=
 const colForn={key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v||'—')}</span>`};
 const colGiroSpark={key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${int(p.giro_mes)} ${spark(p.serie_giro)}`};
 
-function exportBtns(view){ const qs=serverQS(); return `<span class="exp"><a class="btn sm" href="/api/export/${view}.xlsx?${qs}">⬇ Excel</a><a class="btn sm" href="/api/export/${view}.csv?${qs}">CSV</a></span>`; }
+function exportBtns(view){ const qs=serverQS(); return `<span class="exp"><a class="btn sm" href="/api/export/${view}.xlsx?${qs}">⬇ Excel</a><a class="btn sm" href="/api/export/${view}.pdf?${qs}">⬇ PDF</a></span>`; }
 function head(title,view){ return `<h2 class="section"><span>${title}</span>${view?exportBtns(view):''}</h2>`; }
 
 /* ───────── VIEWS ───────── */
@@ -198,41 +198,6 @@ function renderCockpit(P){
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
   el.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
   wireAlerts(el);
-}
-
-function renderFila(P){
-  const itens=[]; const f=S.cli;
-  P.filter(p=>p.status_ruptura||p.status_abast==='urgente').forEach(p=>itens.push({
-    cod:p.codprod,desc:p.descricao,forn:p.fornecedor,motivo:p.estoque_zero?'Estoque zerado':'Cobertura '+cob(p.cobertura),
-    tipo:'comprar',prio:p.estoque_zero?0:(p.cobertura||0),valor:(p.sugestao_compra||0)*(p.custo_unit||0),p}));
-  lotesFiltrados().filter(l=>l.classificacao!=='planejar').forEach(l=>itens.push({
-    cod:l.codprod,desc:l.descricao,forn:l.fornecedor,motivo:'Vence em '+l.dias_para_vencer+'d',
-    tipo:'vencimento',prio:100+l.dias_para_vencer,valor:l.valor_risco,lote:l}));
-  P.filter(p=>p.status_parado==='muito_critico').forEach(p=>itens.push({
-    cod:p.codprod,desc:p.descricao,forn:p.fornecedor,motivo:(p.dias_sem_venda==null?'Sem saída':p.dias_sem_venda+'d s/ venda'),
-    tipo:'liquidar',prio:1000,valor:p.valor,p}));
-  itens.sort((a,b)=>a.prio-b.prio||b.valor-a.valor);
-  const tipoBadge={comprar:['Comprar',C.orange],vencimento:['Vencimento',C.yellow],liquidar:['Liquidar',C.purple]};
-  const el=$('#v-fila');
-  const quem=f.comprador?(S.compradorNome||'você'):'a empresa';
-  el.innerHTML=`<h2 class="section"><span>⚡ Minha Fila — ${itens.length} ações para ${esc(quem)}</span></h2>
-    <div class="count-line">Prioridade: ruptura → vencimento → estoque parado crítico. Clique numa ação para resolver.</div>
-    ${itens.length?'':'<div class="empty">Nada urgente agora 🎉</div>'}
-    <div class="fila">`+itens.slice(0,80).map((it,i)=>`
-      <div class="fila-item" data-cod="${it.cod}">
-        <div class="fi-tipo" style="--c:${tipoBadge[it.tipo][1]}">${tipoBadge[it.tipo][0]}</div>
-        <div class="fi-main"><div class="fi-desc">${esc(it.desc)}</div><div class="fi-sub">${esc(it.forn||'')} · ${it.motivo}</div></div>
-        <div class="fi-val">${it.valor?moneyK(it.valor):''}</div>
-        <div class="fi-acts rowact">
-          ${it.tipo==='comprar'?`<button class="btn sm" data-act="pedido" data-i="${i}">Registrar pedido</button>`:''}
-          ${it.tipo==='vencimento'?`<button class="btn sm" data-act="plano" data-i="${i}">Plano de ação</button>`:''}
-          ${it.tipo==='liquidar'?`<button class="btn sm" data-act="plano" data-i="${i}">Plano de ação</button>`:''}
-          <button class="btn sm" data-act="360" data-i="${i}">360°</button>
-        </div>
-      </div>`).join('')+`</div>`;
-  el.querySelectorAll('.fila-item').forEach(r=>r.onclick=e=>{ if(!e.target.closest('.rowact'))openProduto(r.dataset.cod); });
-  el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{ const it=itens[+b.dataset.i], act=b.dataset.act;
-    if(act==='360')openProduto(it.cod); else if(act==='pedido')modalPedido(it.p); else if(act==='plano')modalPlano(it); });
 }
 
 function renderRuptura(P){
@@ -317,22 +282,45 @@ function renderValidade(){
     {key:'qt',label:'Qtd',num:true,fmt:int},{key:'saldo_proj',label:'Saldo proj.',num:true,fmt:int},
     {key:'valor_risco',label:'Valor risco',num:true,fmt:money},{key:'classificacao',label:'Classe',badge:true},
     {key:'_plano',label:'Ação',html:l=>planoCell('validade',l.codprod+'|'+l.dtval,l.codprod,l.descricao,l.dtval)}];
-  // faixas
+  // faixas — por faixa: valor de estoque (bruto qtd×custo), valor em risco (projetado) e nº lotes
   const faixas=[['0-15',0,15],['16-30',16,30],['31-60',31,60],['61-90',61,90],['90+',91,1e9]];
-  const fd=faixas.map(([n,lo,hi])=>{const it=L.filter(l=>l.dias_para_vencer>=lo&&l.dias_para_vencer<=hi);return{n,qt:it.length,valor:it.reduce((s,l)=>s+(l.valor_risco||0),0)};});
-  // filtro pelo gráfico: clicar numa barra filtra a tabela por aquela faixa de dias
+  const fd=faixas.map(([n,lo,hi])=>{const it=L.filter(l=>l.dias_para_vencer>=lo&&l.dias_para_vencer<=hi);
+    return{n,qt:it.length,valor:it.reduce((s,l)=>s+(l.valor_risco||0),0),
+      bruto:it.reduce((s,l)=>s+(l.qt||0)*(l.custo_unit||0),0)};});
+  // filtro pelo gráfico/cards: clicar numa faixa filtra a tabela por aquela faixa de dias
   const Lf=S.valFaixa?L.filter(l=>l.dias_para_vencer>=S.valFaixa[0]&&l.dias_para_vencer<=S.valFaixa[1]):L;
   const baseCols=[C.red,C.orange,C.yellow,C.accent,C.dim];
   const barCols=baseCols.map((c,i)=>(!S.valFaixa||S.valFaixa[2]===faixas[i][0])?c:'rgba(100,116,139,.28)');
+  const cards=fd.map((f,i)=>`<div class="vfx ${S.valFaixa&&S.valFaixa[2]===f.n?'on':''}" data-i="${i}" style="--c:${baseCols[i]}">
+      <div class="vfx-h">${f.n} dias</div>
+      <div class="vfx-v">${money(f.bruto)}</div>
+      <div class="vfx-s">risco ${moneyK(f.valor)} · ${int(f.qt)} lotes</div></div>`).join('');
+  // vencimento por comprador (respeita a faixa selecionada) — clicável p/ filtrar
+  const compMap={}; (S.produtosAll||[]).forEach(p=>{if(p.comprador&&p.codcomprador!=null)compMap[p.comprador]=p.codcomprador;});
+  const cg={}; Lf.forEach(l=>{const nome=l.comprador||'Sem comprador';const g=cg[nome]=cg[nome]||{nome,bruto:0,risco:0,n:0};
+    g.bruto+=(l.qt||0)*(l.custo_unit||0); g.risco+=(l.valor_risco||0); g.n++;});
+  const compRows=Object.values(cg).sort((a,b)=>b.bruto-a.bruto);
+  const compTbl=`<h3>Vencimento por comprador</h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Estoque</th><th class="num">Risco</th><th class="num">Lotes</th></tr></thead>
+    <tbody>${compRows.map(g=>{const cod=compMap[g.nome],sel=cod!=null&&String(cod)===S.cli.comprador;
+      return `<tr data-comp="${cod!=null?cod:''}" style="${cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}"><td><span class="prod">${esc(g.nome)}</span></td><td class="num">${money(g.bruto)}</td><td class="num">${moneyK(g.risco)}</td><td class="num">${int(g.n)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table></div>`;
   const el=$('#v-validade');
-  el.innerHTML=head(`Validade / FEFO — próximos ${S.params.hor} dias`,'validade')+
-    `<div class="row"><div class="panel grow" style="max-width:420px"><h3>Risco por faixa de dias <small class="muted">· clique p/ filtrar</small></h3><div class="chart-box sm"><canvas id="ch-val"></canvas></div></div>
-     <div class="panel grow" id="val-tbl"></div></div>`;
+  el.innerHTML=head(`Validade / FEFO — próximos ${S.params.hor} dias`,'validade')
+    +`<div class="panel"><h3>Por faixa de validade <small class="muted">· estoque parado vs. risco · clique p/ filtrar</small></h3>
+        <div class="vfx-row">${cards}</div>
+        <div class="row" style="align-items:flex-start">
+          <div style="flex:0 0 340px;max-width:340px"><div class="chart-box sm" style="height:170px"><canvas id="ch-val"></canvas></div></div>
+          <div class="grow">${compTbl}</div>
+        </div></div>
+      <div class="panel" id="val-tbl"></div>`;
   $('#val-tbl').innerHTML=(S.valFaixa?`<div class="count-line">Filtrando faixa <b>${S.valFaixa[2]} dias</b> · <a href="#" id="val-clear">limpar</a></div>`:'')+renderTableInline(Lf,cols,'validade');
   if(S.valFaixa){const c=$('#val-clear'); if(c)c.onclick=e=>{e.preventDefault();S.valFaixa=null;render();};}
+  el.querySelectorAll('.vfx').forEach(d=>d.onclick=()=>{const i=+d.dataset.i,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();});
+  el.querySelectorAll('tr[data-comp]').forEach(tr=>{const cod=tr.dataset.comp; if(!cod)return;
+    tr.onclick=()=>{ S.cli.comprador=(S.cli.comprador===cod)?'':cod; const sel=$('#f-comprador'); if(sel){sel.value=S.cli.comprador; S.compradorNome=S.cli.comprador?(sel.selectedOptions[0]?.textContent||''):'';} render(); };});
   chart('ch-val',{type:'bar',data:{labels:fd.map(f=>f.n),datasets:[{data:fd.map(f=>f.valor),backgroundColor:barCols,borderRadius:6}]},options:{
     onClick:(ev,els)=>{if(!els||!els.length)return;const i=els[0].index,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();},
-    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'risco '+money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   wirePlanoCells();
 }
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)
@@ -354,15 +342,9 @@ function renderParado(P){
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'valor',label:'Valor',num:true,fmt:money},
     {key:'status_saida',label:'Saída',badge:true},{key:'status_parado',label:'Classe',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
-  // filtro rápido (client-side, instantâneo): sem venda ≥ X dias — "sem saída" sempre incluído
-  $('#v-parado').innerHTML=head('Estoque parado — o que liquidar','parado')
-    +`<div class="count-line">Filtro rápido — sem venda ≥ <input type="number" id="pq-parado" value="${S.paradoMin||''}" placeholder="0" style="width:72px"> dias</div>`
-    +`<div id="parado-tbl"></div>`;
-  const desenha=()=>{ const min=+($('#pq-parado').value)||0;
-    const par=allPar.filter(p=>p.dias_sem_venda==null||p.dias_sem_venda>=min).sort((a,b)=>b.valor-a.valor);
-    $('#parado-tbl').innerHTML=renderTable(par,cols,'parado'); wirePlanoCells(); };
-  $('#pq-parado').oninput=()=>{ S.paradoMin=+$('#pq-parado').value||0; desenha(); };
-  desenha();
+  const par=allPar.sort((a,b)=>b.valor-a.valor);
+  $('#v-parado').innerHTML=head('Estoque parado — o que liquidar','parado')+renderTable(par,cols,'parado');
+  wirePlanoCells();
 }
 
 function renderABCXYZ(P){
@@ -429,15 +411,22 @@ function renderComprasVendas(P){
       const o=g[key]=g[key]||{key,nome,n:0,estoque:0,venda:0,lucro:0,giro:0,rupt:0,parado:0};
       o.n++; o.estoque+=(p.valor||0); o.venda+=(p.venda||0); o.lucro+=(p.lucro||0); o.giro+=(p.giro_mes||0);
       if(p.status_ruptura)o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
-    const rows=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null})).sort((a,b)=>b.venda-a.venda);
+    const rows0=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null}));
+    const ck=[{k:'nome',label:dim==='fornecedor'?'Fornecedor':'Comprador'},{k:'n',label:'Itens',num:1},
+      {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
+      {k:'margem',label:'Margem',num:1},{k:'turn',label:'Venda/Estoque',num:1},{k:'rupt',label:'Ruptura',num:1},{k:'parado',label:'Parado R$',num:1}];
+    const skk='cv_'+dim, sk=S.sort[skk]||{key:'venda',dir:-1};
+    const rows=[...rows0].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
+      if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
     const totE=rows.reduce((s,r)=>s+r.estoque,0),totV=rows.reduce((s,r)=>s+r.venda,0),totL=rows.reduce((s,r)=>s+r.lucro,0);
     html+=`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
       ${kpi('Estoque (compras)',money(totE),'',C.accent)}${kpi('Venda',money(totV),'',C.green)}
       ${kpi('Lucro',money(totL),'',C.accent2)}${kpi('Margem',totV?dec(totL/totV*100,1)+'%':'—','',C.purple)}</div>`;
-    html+=`<div class="tbl-wrap"><table><thead><tr><th>${dim==='fornecedor'?'Fornecedor':'Comprador'}</th><th class="num">Itens</th><th class="num">Estoque R$</th><th class="num">Venda R$</th><th class="num">Lucro R$</th><th class="num">Margem</th><th class="num">Venda/Estoque</th><th class="num">Ruptura</th><th class="num">Parado R$</th></tr></thead><tbody>`+
+    html+=`<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead><tbody>`+
       rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
       `</tbody></table></div><div class="count-line">${rows.length} ${dim==='fornecedor'?'fornecedores':'compradores'} · "Venda/Estoque" = quantas vezes o capital girou no período.</div>`;
     el.innerHTML=html;
+    el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skk]||{};S.sort[skk]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
   }
   el.querySelectorAll('#cv-seg .seg-opt').forEach(o=>o.onclick=()=>{S.cvDim=o.dataset.d;render();});
   el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
@@ -608,13 +597,14 @@ function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').class
 
 /* ───────── dispatch ───────── */
 function render(){
+  if(!$('#v-'+S.view)) S.view='cockpit';   // view inválida/removida (ex.: 'fila' salva) → cockpit
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+S.view).classList.add('active');
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===S.view));
   if(S.view==='orcamento'){ renderOrcamento(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   const P=filtered();
-  ({fila:renderFila,cockpit:renderCockpit,ruptura:renderRuptura,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos}[S.view])(P);
+  ({cockpit:renderCockpit,ruptura:renderRuptura,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos}[S.view]||renderCockpit)(P);
   savePrefs();
 }
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
@@ -647,7 +637,7 @@ async function init(){
   $('#p-arredcx').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.params.arredondacx=+o.dataset.v;$('#p-arredcx').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
 
   // comprador → client filter + define visão inicial
-  $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.selectedOptions[0]?.textContent||''; if(e.target.value&&S.view==='cockpit')S.view='fila'; render(); };
+  $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.selectedOptions[0]?.textContent||''; render(); };
   $('#f-filiais').querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const v=ch.dataset.f;ch.classList.toggle('on');ch.classList.contains('on')?S.filiaisSel.add(v):S.filiaisSel.delete(v); if(!S.filiaisSel.size){ch.classList.add('on');S.filiaisSel.add(v);return;} loadData();});
   $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.base=o.dataset.v;$('#f-base').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));loadData();});
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};

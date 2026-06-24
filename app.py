@@ -438,6 +438,134 @@ def api_export_xlsx(view):
     )
 
 
+# ───────────────────────── export PDF (mesma estética do Multpel HTML) ─────────────
+# colunas principais por tela: (chave, rótulo, tipo[, maxlen])
+_PDF_COLS = {
+    "produtos": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+                 ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("giro_mes", "Giro/mês", "int"),
+                 ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"), ("status_abast", "Abast.", "text")],
+    "comprasvendas": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+                      ("valor", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
+                      ("margem", "Margem", "pct"), ("cobertura", "Cob.(d)", "int")],
+    "reposicao": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+                  ("qtdisp", "Disp.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
+                  ("sugestao_compra", "Sugerido", "int")],
+    "parado": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
+               ("dtultsaida", "Últ. venda", "date"), ("dias_sem_venda", "Dias s/v", "int"), ("qtdisp", "Disp.", "int"),
+               ("valor", "Valor", "money"), ("status_parado", "Classe", "text")],
+    "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+                ("qtdisp", "Disp.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
+                ("sugestao_compra", "Sugerido", "int"), ("status_ruptura", "Faixa", "text")],
+    "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
+                 ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
+                 ("valor_risco", "Valor risco", "money"), ("classificacao", "Classe", "text")],
+    "fornecedores": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 34), ("n_produtos", "Itens", "int"),
+                     ("valor", "Estoque", "money"), ("venda", "Venda", "money"), ("margem", "Margem", "pct"),
+                     ("indice", "Índice", "num"), ("classificacao", "Classe", "text")],
+    "compradores": [("codcomprador", "Cód", "text"), ("comprador", "Comprador", "text", 30), ("n_produtos", "Itens", "int"),
+                    ("estoque", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
+                    ("margem", "Margem", "pct")],
+}
+_PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
+               "parado": "Estoque parado", "ruptura": "Ruptura", "validade": "Validade / FEFO",
+               "fornecedores": "Fornecedores", "compradores": "Compradores"}
+
+
+def _fmt_pdf(v, kind, maxlen=None):
+    if v is None or v == "":
+        return "—"
+    try:
+        if kind == "money":
+            return ("R$ %s" % f"{float(v):,.2f}").replace(",", "X").replace(".", ",").replace("X", ".")
+        if kind == "int":
+            return f"{int(round(float(v))):,}".replace(",", ".")
+        if kind == "num":
+            return f"{float(v):.2f}".replace(".", ",")
+        if kind == "pct":
+            return f"{float(v):.1f}%"
+        if kind == "date":
+            s = str(v)[:10].split("-")
+            return f"{s[2]}/{s[1]}/{s[0]}" if len(s) == 3 else str(v)
+    except (ValueError, TypeError):
+        pass
+    s = str(v)
+    return (s[:maxlen - 1] + "…") if (maxlen and len(s) > maxlen) else s
+
+
+def _gerar_pdf(view, linhas):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    spec = _PDF_COLS.get(view) or _PDF_COLS["produtos"]
+    titulo = _PDF_TITULO.get(view, view.capitalize())
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.5 * cm,
+                            title=f"Estoque — {titulo}")
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('t', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('s', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = [Paragraph(f'<b>Multpel · Estoque</b> — {titulo}', titulo_style),
+             Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')} · {len(linhas)} registros", sub_style),
+             Spacer(1, 0.3 * cm)]
+
+    header = [c[1] for c in spec]
+    data = [header]
+    for r in linhas:
+        data.append([_fmt_pdf(r.get(c[0]), c[2], c[3] if len(c) > 3 else None) for c in spec])
+
+    # larguras proporcionais (pesos por tipo; texto largo p/ descrição/fornecedor)
+    def _peso(c):
+        if len(c) > 3:
+            return c[3] / 7.0
+        return {"money": 2.2, "date": 1.8, "pct": 1.3, "int": 1.3, "num": 1.4}.get(c[2], 1.5)
+    pesos = [_peso(c) for c in spec]
+    usable = landscape(A4)[0] - 2.4 * cm
+    soma = sum(pesos) or 1
+    col_w = [usable * p / soma for p in pesos]
+
+    estilo = [
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]
+    for i, c in enumerate(spec):
+        al = 'RIGHT' if c[2] in ("int", "money", "pct", "num") else ('CENTER' if c[2] == "date" else 'LEFT')
+        if al != 'LEFT':
+            estilo.append(('ALIGN', (i, 0), (i, -1), al))
+    tbl = Table(data, repeatRows=1, colWidths=col_w)
+    tbl.setStyle(TableStyle(estilo))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route("/api/export/<view>.pdf")
+def api_export_pdf(view):
+    _, linhas = _export_data(view)
+    pdf = _gerar_pdf(view, linhas)
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="estoque_{view}.pdf"'})
+
+
 # ───────────────────────── orçamento / pedidos (Postgres) ─────────────────────────
 @app.route("/api/orcamento")
 def api_orcamento():
