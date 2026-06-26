@@ -601,6 +601,133 @@ def api_pedido_edit(pid):
     return jsonify({"ok": True})
 
 
+def _gerar_pdf_pedido(pe, itens=None):
+    """Documento PDF de UM pedido de compra. Com itens → ordem de compra (landscape,
+    lista de produtos + total); sem itens → cabeçalho/valor (retrato). Estética do painel."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    import math
+
+    def _d(v):
+        if not v:
+            return "—"
+        s = str(v)[:10].split("-")
+        return f"{s[2]}/{s[1]}/{s[0]}" if len(s) == 3 else str(v)
+
+    def _m(v):
+        try:
+            return ("R$ %s" % f"{float(v):,.2f}").replace(",", "X").replace(".", ",").replace("X", ".")
+        except (ValueError, TypeError):
+            return "—"
+
+    def _e(v):
+        return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _i(v):
+        try:
+            return f"{int(round(float(v))):,}".replace(",", ".")
+        except (ValueError, TypeError):
+            return "—"
+
+    def _sug(it):
+        q = core._n(it.get("qtd")); cx = core._n(it.get("qtunitcx"))
+        if cx > 1 and q > 0:
+            return f"{int(math.ceil(q / cx))} cx · {int(q)} un"
+        return f"{int(q)} un" if q else "—"
+
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('t', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('s', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+    info_style = ParagraphStyle('i', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#0a0e17'), leading=14)
+    buf = io.BytesIO()
+
+    def _rodape(canvas, doc):
+        canvas.saveState(); canvas.setFont('Helvetica', 7); canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    cab = (f"Nº pedido: <b>{_e(pe.get('n_pedido') or '—')}</b> · Data: <b>{_d(pe.get('data_pedido'))}</b> · "
+           f"Fornecedor: <b>{_e(pe.get('fornecedor') or '—')}</b> · Comprador: <b>{_e(pe.get('comprador') or '—')}</b><br/>"
+           f"Prazo: <b>{(str(pe.get('prazo_dias'))+'d') if pe.get('prazo_dias') else '—'}</b> · "
+           f"Vencimento: <b>{_d(pe.get('dt_vencimento'))}</b> · Status: <b>{_e(pe.get('status') or '—')}</b>"
+           + (f" · Forma pgto: <b>{_e(pe.get('forma_pgto'))}</b>" if pe.get('forma_pgto') else ""))
+
+    if itens:
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+                                topMargin=1.2 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
+        story = [Paragraph('<b>Multpel · Estoque</b> — Pedido de Compra', titulo_style),
+                 Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", sub_style),
+                 Spacer(1, 0.25 * cm), Paragraph(cab, info_style), Spacer(1, 0.3 * cm)]
+        header = ["Cód", "Produto", "Disp.", "Cob.", "Giro/mês", "Sugerido", "Valor"]
+        data = [header]
+        total = 0.0
+        for it in itens:
+            cob = it.get("cobertura")
+            total += core._n(it.get("valor"))
+            data.append([_i(it.get("codprod")), (str(it.get("descricao") or "")[:48]),
+                         _i(it.get("qtdisp")), (f"{int(round(float(cob)))}d" if cob not in (None, "") else "∞"),
+                         _i(it.get("giro_mes")), _sug(it), _m(it.get("valor"))])
+        data.append(["", "", "", "", "", "TOTAL", _m(total)])
+        col_w = [1.6 * cm, 9.5 * cm, 2 * cm, 1.8 * cm, 2.4 * cm, 4 * cm, 3 * cm]
+        tbl = Table(data, repeatRows=1, colWidths=col_w)
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 7),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8fafc')]),
+            ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')),
+        ]))
+        story.append(tbl)
+        doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    else:
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.6 * cm, rightMargin=1.6 * cm,
+                                topMargin=1.4 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
+        lbl = ParagraphStyle('l', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#475569'))
+        val = ParagraphStyle('v', parent=styles['Normal'], fontSize=11, textColor=colors.HexColor('#0a0e17'))
+        story = [Paragraph('<b>Multpel · Estoque</b> — Pedido de Compra', titulo_style),
+                 Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", sub_style), Spacer(1, 0.5 * cm)]
+        linhas = [("Nº do pedido", pe.get('n_pedido') or '—'), ("Data do pedido", _d(pe.get('data_pedido'))),
+                  ("Fornecedor", pe.get('fornecedor') or '—'), ("Comprador", pe.get('comprador') or '—'),
+                  ("Valor", _m(pe.get('valor'))), ("Prazo de pagamento", f"{pe.get('prazo_dias')} dias" if pe.get('prazo_dias') else '—'),
+                  ("Vencimento", _d(pe.get('dt_vencimento'))), ("Forma de pagamento", pe.get('forma_pgto') or '—'),
+                  ("Status", pe.get('status') or '—'), ("Observações", pe.get('obs') or '—')]
+        data = [[Paragraph(k, lbl), Paragraph(_e(v), val)] for k, v in linhas]
+        tbl = Table(data, colWidths=[5 * cm, 11.8 * cm])
+        tbl.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(tbl)
+        doc.build(story)
+    return buf.getvalue()
+
+
+@app.route("/api/pedidos/<int:pid>.pdf")
+def api_pedido_pdf(pid):
+    if not store.disponivel():
+        return jsonify({"ok": False, "error": "Postgres indisponível"}), 503
+    pe = store.pedido_get(pid)
+    if not pe:
+        return jsonify({"ok": False, "error": "Pedido não encontrado"}), 404
+    itens = store.pedido_itens(pid)
+    nome = f"pedido_{pe.get('n_pedido') or pid}.pdf"
+    return Response(_gerar_pdf_pedido(pe, itens), mimetype="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{nome}"'})
+
+
 # ───────────────────────── planos de ação (Postgres) ─────────────────────────
 @app.route("/api/planos")
 def api_planos():

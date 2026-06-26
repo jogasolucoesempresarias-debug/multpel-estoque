@@ -50,6 +50,19 @@ CREATE TABLE IF NOT EXISTS estoque_pedidos (
     obs           TEXT,
     criado_em     TIMESTAMP DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS estoque_pedido_itens (
+    id          SERIAL PRIMARY KEY,
+    pedido_id   INTEGER NOT NULL REFERENCES estoque_pedidos(id) ON DELETE CASCADE,
+    codprod     INTEGER,
+    descricao   TEXT,
+    qtdisp      NUMERIC,
+    cobertura   NUMERIC,
+    giro_mes    NUMERIC,
+    qtunitcx    NUMERIC,
+    qtd         NUMERIC,
+    custo_unit  NUMERIC,
+    valor       NUMERIC
+);
 CREATE TABLE IF NOT EXISTS estoque_planos_acao (
     chave         TEXT PRIMARY KEY,
     tipo          TEXT NOT NULL,
@@ -143,6 +156,25 @@ def pedidos_list(mes, comprador=None):
     return out
 
 
+def pedido_get(pid):
+    conn = get_db()
+    with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM estoque_pedidos WHERE id=%s", (pid,))
+        row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def pedido_itens(pid):
+    """Itens (snapshot) de um pedido, em ordem de inclusão."""
+    conn = get_db()
+    with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM estoque_pedido_itens WHERE pedido_id=%s ORDER BY id", (pid,))
+        out = _rows(cur)
+    conn.close()
+    return out
+
+
 def pedido_add(d):
     conn = get_db()
     with conn, conn.cursor() as cur:
@@ -151,6 +183,12 @@ def pedido_add(d):
             VALUES (%(data_pedido)s,%(mes)s,%(comprador)s,%(codfornec)s,%(fornecedor)s,%(n_pedido)s,%(valor)s,%(prazo_dias)s,%(dt_vencimento)s,%(status)s,%(forma_pgto)s,%(obs)s)
             RETURNING id""", _ped_defaults(d))
         new_id = cur.fetchone()[0]
+        for it in (d.get("itens") or []):
+            cur.execute("""INSERT INTO estoque_pedido_itens
+                (pedido_id, codprod, descricao, qtdisp, cobertura, giro_mes, qtunitcx, qtd, custo_unit, valor)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (new_id, it.get("codprod"), it.get("descricao"), it.get("qtdisp"), it.get("cobertura"),
+                 it.get("giro_mes"), it.get("qtunitcx"), it.get("qtd"), it.get("custo_unit"), it.get("valor")))
     conn.close()
     return new_id
 

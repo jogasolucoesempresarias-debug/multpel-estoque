@@ -454,7 +454,7 @@ async function renderOrcamento(){
       <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')}</div></div>
     <div class="panel"><h3>Pedidos lançados</h3>
       ${o.pedidos.length?`<div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Pedido</th><th class="num">Valor</th><th>Prazo</th><th>Status</th><th></th></tr></thead>
-      <tbody>${o.pedidos.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td>${pe.prazo_dias||''}${pe.prazo_dias?'d':''}</td><td>${badge((pe.status||'').toLowerCase(),pe.status)}</td><td><button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido lançado neste mês.</div>'}
+      <tbody>${o.pedidos.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td>${pe.prazo_dias||''}${pe.prazo_dias?'d':''}</td><td>${badge((pe.status||'').toLowerCase(),pe.status)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf" title="Baixar pedido em PDF">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido lançado neste mês.</div>'}
     </div>`;
   $('#btn-meta').onclick=()=>modalMeta(r);
   $('#btn-pedido').onclick=()=>modalPedido(null);
@@ -470,7 +470,7 @@ function planoCell(tipo,chave,cod,desc,dtval){
 function wirePlanoCells(){ document.querySelectorAll('.plano-set').forEach(b=>b.onclick=e=>{e.stopPropagation();modalPlano({cod:+b.dataset.cod,desc:b.dataset.desc,tipo:b.dataset.tipo,chave:b.dataset.chave,dtval:b.dataset.dtval||null});}); }
 
 /* ───────── modais ───────── */
-function openModal(html){ $('#modal').innerHTML=html; $('#modal-bg').classList.add('on'); }
+function openModal(html,wide){ $('#modal').innerHTML=html; $('#modal').classList.toggle('wide',!!wide); $('#modal-bg').classList.add('on'); }
 function closeModal(){ $('#modal-bg').classList.remove('on'); }
 function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
   <label>Valor da meta (R$)</label><input type="number" id="m-meta" value="${r.meta||''}" step="1000">
@@ -478,37 +478,73 @@ function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
   $('#m-cancel').onclick=closeModal;
   $('#m-ok').onclick=async()=>{ await postJSON('/api/orcamento/meta',{mes:r.mes,comprador:r.comprador,meta_valor:+$('#m-meta').value||0}); closeModal(); toast('Meta salva'); renderOrcamento(); };
 }
-function modalPedido(prod){ // prod opcional (pré-preenche fornecedor + valor sugerido)
+// monta um item (snapshot) a partir de um produto
+function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdisp:p.qtdisp,cobertura:p.cobertura,
+  giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,qtd:(qtd!=null?qtd:(p.sugestao_compra||0))}; }
+
+// Construtor de pedido com itens. opts: produto único (do 360°) | {fornecedor,codfornec,itens} (sugestão) | null (manual)
+function modalPedido(opts){
+  opts=opts||{};
+  let itens=[], fornIni='';
+  if(opts.itens){ itens=opts.itens.map(x=>({...x})); fornIni=opts.fornecedor||''; }
+  else if(opts.codprod){ itens=[_prodItem(opts)]; fornIni=opts.fornecedor||''; }
   const comp=S.compradorNome||'TODOS', hoje=new Date().toISOString().slice(0,10);
-  const vsug=prod?((prod.sugestao_compra||0)*(prod.custo_unit||0)):'';
-  const dl=(S.fornecedores||[]).map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
-  openModal(`<h3>Novo pedido de compra</h3>
-    <label>Data</label><input type="date" id="pd-data" value="${hoje}">
-    <label>Fornecedor</label><input type="text" id="pd-forn" list="pd-forn-dl" autocomplete="off" placeholder="digite e selecione…" value="${prod?esc(prod.fornecedor||''):''}"><datalist id="pd-forn-dl">${dl}</datalist>
-    <label>Nº pedido</label><input type="text" id="pd-num">
-    <label>Valor (R$)</label><input type="number" id="pd-valor" value="${vsug?vsug.toFixed(2):''}" step="0.01">
-    <label>Prazo pagamento (dias)</label><input type="number" id="pd-prazo">
-    <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar</button></div>`);
+  const fdl=(S.fornecedores||[]).map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
+  const pdl=(S.produtosAll||[]).map(p=>`<option value="${p.codprod} — ${esc(p.descricao||'')}">`).join('');
+  openModal(`<h3>${opts.itens?('Gerar pedido — '+esc(fornIni)):'Novo pedido de compra'}</h3>
+    <div class="row">
+      <div class="fb-group"><label>Data</label><input type="date" id="pd-data" value="${hoje}" style="width:150px"></div>
+      <div class="fb-group grow" style="flex:1 1 240px"><label>Fornecedor</label><input type="text" id="pd-forn" list="pd-forn-dl" autocomplete="off" placeholder="digite e selecione…" value="${esc(fornIni)}"><datalist id="pd-forn-dl">${fdl}</datalist></div>
+      <div class="fb-group"><label>Nº pedido</label><input type="text" id="pd-num" style="width:130px"></div>
+      <div class="fb-group"><label>Prazo (dias)</label><input type="number" id="pd-prazo" style="width:100px"></div>
+      <div class="fb-group"><label>Valor (R$)</label><input type="number" id="pd-valor" step="0.01" style="width:130px"></div>
+    </div>
+    <div class="d-sec">Itens do pedido</div>
+    <div class="row">
+      <div class="fb-group grow" style="flex:1 1 320px"><label>Adicionar produto</label><input type="text" id="pd-prodadd" list="pd-prod-dl" autocomplete="off" placeholder="código ou descrição…"><datalist id="pd-prod-dl">${pdl}</datalist></div>
+      <div class="fb-group"><label>Qtd (un)</label><input type="number" id="pd-prodqt" min="1" style="width:100px"></div>
+      <div class="fb-group"><label>&nbsp;</label><button class="btn" id="pd-additem">＋ Adicionar</button></div>
+    </div>
+    <div id="pd-itens" style="margin-top:8px"></div>
+    <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar</button></div>`, true);
+  const total=()=>itens.reduce((s,x)=>s+((+x.qtd||0)*(+x.custo_unit||0)),0);
+  function draw(){
+    $('#pd-itens').innerHTML = itens.length
+      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Qtd (un)</th><th class="num">Cx</th><th class="num">Custo</th><th class="num">Valor</th><th></th></tr></thead><tbody>`+
+        itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
+          <td class="num"><input type="number" data-qi="${i}" value="${int(x.qtd)}" min="0" style="width:74px;text-align:right"></td>
+          <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
+          <td class="num">${money(x.custo_unit)}</td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
+          <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
+        `</tbody></table></div><div class="count-line" style="text-align:right">Total: <b>${money(total())}</b> · ${itens.length} itens</div>`
+      : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
+    const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
+    $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{ itens[+inp.dataset.qi].qtd=+inp.value||0; draw(); });
+    $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
+  }
+  draw();
+  $('#pd-additem').onclick=()=>{
+    const raw=($('#pd-prodadd').value||'').trim(); const cod=parseInt(raw,10);
+    const p=(S.produtosAll||[]).find(x=>x.codprod===cod)||(S.produtosAll||[]).find(x=>(x.descricao||'').toLowerCase()===raw.toLowerCase());
+    if(!p){ toast('Produto não encontrado',true); return; }
+    const qt=+$('#pd-prodqt').value||p.sugestao_compra||0;
+    const ex=itens.find(x=>x.codprod===p.codprod); if(ex){ ex.qtd=(+ex.qtd||0)+qt; } else { itens.push(_prodItem(p,qt)); }
+    if(!$('#pd-forn').value && p.fornecedor) $('#pd-forn').value=p.fornecedor;
+    $('#pd-prodadd').value=''; $('#pd-prodqt').value=''; draw();
+  };
   $('#m-cancel').onclick=closeModal;
   $('#m-ok').onclick=async()=>{
     const nome=($('#pd-forn').value||'').trim();
     const match=(S.fornecedores||[]).find(x=>(x.fornecedor||'').toLowerCase()===nome.toLowerCase());
-    if(nome && !match && !confirm('Fornecedor não está na lista. Lançar mesmo assim com o texto digitado?')) return;
-    const cod=match?match.codfornec:(prod?prod.codfornec:null);
-    await postJSON('/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:cod,fornecedor:match?match.fornecedor:nome,n_pedido:$('#pd-num').value,valor:+$('#pd-valor').value||0,prazo_dias:+$('#pd-prazo').value||null});
-    closeModal(); toast('Pedido lançado'); if(S.view==='orcamento')renderOrcamento(); };
+    const itensPayload=itens.map(x=>({codprod:x.codprod,descricao:x.descricao,qtdisp:x.qtdisp,cobertura:x.cobertura,
+      giro_mes:x.giro_mes,qtunitcx:x.qtunitcx,qtd:+x.qtd||0,custo_unit:x.custo_unit,valor:(+x.qtd||0)*(+x.custo_unit||0)}));
+    const valor=itens.length?total():(+$('#pd-valor').value||0);
+    await postJSON('/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:match?match.codfornec:(opts.codfornec||null),
+      fornecedor:match?match.fornecedor:nome,n_pedido:$('#pd-num').value,valor,prazo_dias:+$('#pd-prazo').value||null,itens:itensPayload});
+    closeModal(); toast('Pedido lançado ✓'); if(S.view==='orcamento')renderOrcamento(); };
 }
-function modalPedidoFornecedor(gr){ // loop: gera 1 pedido com a soma da sugestão do fornecedor
-  const comp=S.compradorNome||'TODOS', hoje=new Date().toISOString().slice(0,10);
-  openModal(`<h3>Gerar pedido — ${esc(gr.forn)}</h3>
-    <div class="count-line">${gr.itens.length} itens sugeridos · total ${money(gr.valor)}</div>
-    <label>Data</label><input type="date" id="pd-data" value="${hoje}">
-    <label>Nº pedido</label><input type="text" id="pd-num">
-    <label>Valor (R$)</label><input type="number" id="pd-valor" value="${gr.valor.toFixed(2)}" step="0.01">
-    <label>Prazo pagamento (dias)</label><input type="number" id="pd-prazo">
-    <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar no orçamento</button></div>`);
-  $('#m-cancel').onclick=closeModal;
-  $('#m-ok').onclick=async()=>{ await postJSON('/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:gr.cod,fornecedor:gr.forn,n_pedido:$('#pd-num').value,valor:+$('#pd-valor').value||0,prazo_dias:+$('#pd-prazo').value||null}); closeModal(); toast('Pedido lançado no orçamento ✓'); };
+function modalPedidoFornecedor(gr){ // "Gerar pedido" da Reposição → construtor com itens pré-preenchidos editáveis
+  modalPedido({fornecedor:gr.forn, codfornec:gr.cod, itens:gr.itens.map(p=>_prodItem(p,p.sugestao_compra))});
 }
 function modalPlano(it){
   const chave=it.chave||(it.tipo==='validade'?(it.cod+'|'+(it.lote?it.lote.dtval:it.dtval)):String(it.cod));
