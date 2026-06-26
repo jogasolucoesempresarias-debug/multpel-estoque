@@ -104,13 +104,18 @@ def _filiais_disponiveis():
 
 @pbi.cached(ttl=86400, key_fn=lambda: "compradores")
 def _compradores_map():
-    """{matricula: nome} — vem do dataset RCA (PCEMPR)."""
-    try:
-        rows = pbi.run_dax_rca(Q.q_compradores_rca())
-        return {int(core._n(r["MATRICULA"])): r["NOME"]
-                for r in rows if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
-    except Exception:
-        return {}
+    """{matricula: nome} — PCEMPR no dataset Estoque (fallback RCA)."""
+    for runner, q in ((pbi.run_dax, Q.q_compradores_estoque()),
+                      (pbi.run_dax_rca, Q.q_compradores_rca())):
+        try:
+            rows = runner(q)
+            m = {int(core._n(r["MATRICULA"])): r["NOME"]
+                 for r in rows if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
+            if m:
+                return m
+        except Exception:
+            continue
+    return {}
 
 
 # ───────────────────────── snapshot (cache 30min por filial-set) ─────────────────────────
@@ -147,6 +152,40 @@ def _endereco_map(filiais):
     return m
 
 
+# ───────────────────────── embalagem / pedido real (cache) ─────────────────────────
+@pbi.cached(ttl=86400, key_fn=lambda: "embalagem")
+def _embalagem_map():
+    """{cod: {qtunit, volume, ...}} — caixa/cubagem do PCEMBALAGEM (Estoque)."""
+    try:
+        rows = pbi.run_dax(Q.q_embalagem())
+        return {int(core._n(r["CODPROD"])): r for r in rows if r.get("CODPROD") not in (None, "")}
+    except Exception as e:
+        print(f"[embalagem] indisponível ({e}).")
+        return {}
+
+
+def _pedidos_data(filiais, hoje):
+    """{'cab': [...PCPEDIDO], 'ja_pedida': {cod: qt_aberta}} — pedido de compra REAL (Winthor).
+    Reutilizado pelo abastecimento (já-pedido) e pelo orçamento/acompanhamento (cabeçalho).
+    Degrada p/ vazio se indisponível. Cache 30min por filial-set + data."""
+    key = f"peddata:{_filiais_key(filiais)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    data = {"cab": [], "itens": [], "ja_pedida": {}}
+    try:
+        cab = pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=180), filiais))
+        if cab:
+            numped_min = min(int(core._n(r["NUMPED"])) for r in cab)
+            itens = pbi.run_dax(Q.q_pedido_itens(numped_min))
+            data = {"cab": cab, "itens": itens,
+                    "ja_pedida": core.montar_ja_pedida(cab, itens, hoje=hoje, dias=180)}
+    except Exception as e:
+        print(f"[pedidos] Winthor indisponível ({e}). Pedido real desabilitado.")
+    pbi._CACHE.set(key, data, 1800)
+    return data
+
+
 def _hoje():
     h = request.args.get("hoje")
     if h:
@@ -159,6 +198,8 @@ def _hoje():
 
 # ───────────────────────── venda real (dataset RCA, cache 30min) ─────────────────────────
 def _venda_datas(periodo, hoje):
+    if periodo == "30d":
+        return hoje - timedelta(days=30), hoje
     if periodo == "90d":
         return hoje - timedelta(days=90), hoje
     if periodo == "6m":
@@ -221,6 +262,21 @@ def _vendas_mensal_map(meses, hoje, profundo=False):
     return m
 
 
+def _venda_comprador_30d(filiais, hoje):
+    """{nome_comprador: venda_liquida_30d} — base da meta de orçamento (65%). Usa caches."""
+    key = f"vcomp30:{_filiais_key(filiais)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    produtos = core.construir_produtos(
+        _snapshot_rows(filiais), _endereco_map(filiais), _cadastro_produtos(),
+        _cadastro_fornecedores(), _compradores_map(), _vendas_map("30d", hoje),
+        dict(core.DEFAULTS), hoje=hoje)
+    m = {g["comprador"]: g["venda"] for g in core.por_comprador(produtos) if g.get("comprador")}
+    pbi._CACHE.set(key, m, 1800)
+    return m
+
+
 def _build_produtos():
     """Constrói a lista enriquecida de produtos para os filtros/params atuais."""
     filiais = _filiais_param()
@@ -233,8 +289,11 @@ def _build_produtos():
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje())
     venda_mensal = (_vendas_mensal_map(params["forecast_meses"], _hoje(), profundo=bool(params.get("forecast_sazonal")))
                     if params.get("forecast") else None)
+    ja_pedida = _pedidos_data(filiais, _hoje())["ja_pedida"]
+    embalagem = _embalagem_map()
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
-                                       hoje=_hoje(), venda_mensal_map=venda_mensal)
+                                       hoje=_hoje(), venda_mensal_map=venda_mensal,
+                                       ja_pedida_map=ja_pedida, embalagem_map=embalagem)
     return produtos, params, filiais
 
 
@@ -569,12 +628,37 @@ def api_export_pdf(view):
 # ───────────────────────── orçamento / pedidos (Postgres) ─────────────────────────
 @app.route("/api/orcamento")
 def api_orcamento():
-    if not store.ensure():
-        return jsonify({"ok": False, "error": "Postgres indisponível"}), 503
+    """Orçamento de compras: meta = 65% da venda líq. 30d por comprador; realizado/aberto vêm
+    do pedido REAL (Winthor). Pedidos manuais (nossa plataforma) entram à parte, pendentes de
+    envio — não somam no realizado (evita dupla contagem quando voltarem do Winthor)."""
     mes = _mes_atual()
     comprador = request.args.get("comprador") or "TODOS"
-    return jsonify({"ok": True, "resumo": store.orcamento_resumo(mes, comprador),
-                    "pedidos": store.pedidos_list(mes, comprador)})
+    filiais = _filiais_param()
+    hoje = _hoje()
+    pct = float(request.args.get("pct") or 0.65)
+    cab = _pedidos_data(filiais, hoje)["cab"]
+    venda_comp = _venda_comprador_30d(filiais, hoje)
+    meta_override = store.meta_get(mes, comprador) if store.ensure() else None
+    res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
+                                 mes, comprador, pct=pct, hoje=hoje, meta_override=meta_override)
+    manuais = store.pedidos_pendentes(mes, comprador) if store.disponivel() else []
+    return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
+                    "abertos": res["abertos"], "manuais": manuais})
+
+
+@app.route("/api/logistica")
+def api_logistica():
+    """Cubagem/ocupação por pedido em aberto (o que ainda vai chegar). Capacidade do veículo
+    e limite de baixa ocupação são parâmetros (cap_m3, baixa_ate)."""
+    filiais = _filiais_param()
+    hoje = _hoje()
+    pdata = _pedidos_data(filiais, hoje)
+    cap = float(request.args.get("cap_m3") or 60.0)
+    baixa = float(request.args.get("baixa_ate") or 0.1)
+    res = core.logistica_pedidos(pdata["cab"], pdata["itens"], _cadastro_produtos(),
+                                 _embalagem_map(), _compradores_map(), _cadastro_fornecedores(),
+                                 hoje=hoje, capacidade_m3=cap, baixa_ate=baixa)
+    return jsonify({"ok": True, **res})
 
 
 @app.route("/api/orcamento/meta", methods=["POST"])

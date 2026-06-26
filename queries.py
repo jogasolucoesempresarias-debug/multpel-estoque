@@ -43,7 +43,12 @@ SELECTCOLUMNS(
     "NCM",       PCPRODUT[CLASSIFICFISCAL],
     "MARCA",     PCPRODUT[MARCA],
     "PRAZOVAL",  PCPRODUT[PRAZOVAL],
-    "CTRL_VALIDADE", PCPRODUT[CONTROLAVALIDADEDOLOTE]
+    "CTRL_VALIDADE", PCPRODUT[CONTROLAVALIDADEDOLOTE],
+    "VOLUME",    PCPRODUT[VOLUME],
+    "ALTURAM3",  PCPRODUT[ALTURAM3],
+    "LARGURAM3", PCPRODUT[LARGURAM3],
+    "COMPRIMENTOM3", PCPRODUT[COMPRIMENTOM3],
+    "PESOBRUTO", PCPRODUT[PESOBRUTO]
 )"""
 
 
@@ -67,6 +72,69 @@ def q_filiais():
 def q_compradores_rca():
     return """EVALUATE
 SELECTCOLUMNS(PCEMPR, "MATRICULA", PCEMPR[MATRICULA], "NOME", PCEMPR[NOME])"""
+
+
+# ───── PCEMPR no dataset Estoque (nome do comprador, sem cruzar RCA) ─────
+def q_compradores_estoque():
+    """{matricula: nome} direto do dataset Estoque (PCEMPR existe nos dois datasets)."""
+    return """EVALUATE
+SELECTCOLUMNS(PCEMPR, "MATRICULA", PCEMPR[MATRICULA], "NOME", PCEMPR[NOME])"""
+
+
+# ───────────────────────── pedido de compra real (Winthor) ─────────────────────
+# Modelo tem tabelas-ilha → o "join" PCPEDIDO×PCITEM é feito em Python (por NUMPED).
+def q_pedido_cab(desde, filiais=None):
+    """Cabeçalho dos pedidos (PCPEDIDO) emitidos a partir de `desde` (date).
+    1 registro por NUMPED. VLTOTAL = valor do pedido; DTENTRADAESTOQUE vazio = ainda aberto
+    (não recebido). Não há campo de cancelamento no modelo (alinha com a planilha v3)."""
+    lista = _lista_filiais_dax(filiais)
+    filtros = [f"PCPEDIDO[DTEMISSAO] >= {_date_dax(desde)}"]
+    if lista:
+        filtros.append(f"PCPEDIDO[CODFILIAL] IN {lista}")
+    return f"""EVALUATE
+SELECTCOLUMNS(
+    FILTER(PCPEDIDO, {" && ".join(filtros)}),
+    "NUMPED",           PCPEDIDO[NUMPED],
+    "DTEMISSAO",        PCPEDIDO[DTEMISSAO],
+    "CODFILIAL",        PCPEDIDO[CODFILIAL],
+    "CODFORNEC",        PCPEDIDO[CODFORNEC],
+    "CODCOMPRADOR",     PCPEDIDO[CODCOMPRADOR],
+    "VLTOTAL",          PCPEDIDO[VLTOTAL],
+    "VLENTREGUE",       PCPEDIDO[VLENTREGUE],
+    "DTVENC",           PCPEDIDO[DTVENC],
+    "DTENTRADAESTOQUE", PCPEDIDO[DTENTRADAESTOQUE],
+    "DTPREVENT",        PCPEDIDO[DTPREVENT]
+)"""
+
+
+def q_pedido_itens(numped_min):
+    """Itens (PCITEM) dos pedidos com NUMPED >= numped_min (limita o volume sem depender de
+    relacionamento). Agrega por (NUMPED, CODPROD): qtd pedida e qtd já entregue."""
+    return f"""EVALUATE
+CALCULATETABLE(
+    ADDCOLUMNS(
+        SUMMARIZE(PCITEM, PCITEM[NUMPED], PCITEM[CODPROD]),
+        "qtped",      CALCULATE(SUM(PCITEM[QTPEDIDA])),
+        "qtentregue", CALCULATE(SUM(PCITEM[QTENTREGUE]))
+    ),
+    PCITEM[NUMPED] >= {int(numped_min)}
+)"""
+
+
+# ───────────────────────── embalagem / cubagem (PCEMBALAGEM) ────────────────────
+def q_embalagem():
+    """Por CODPROD: caixa (MAX QTUNIT) + cubagem (VOLUME/dimensões) + peso.
+    Agregado no servidor p/ não esbarrar no teto de 100k linhas do executeQueries."""
+    return """EVALUATE
+ADDCOLUMNS(
+    SUMMARIZE(PCEMBALAGEM, PCEMBALAGEM[CODPROD]),
+    "qtunit",      CALCULATE(MAX(PCEMBALAGEM[QTUNIT])),
+    "volume",      CALCULATE(MAX(PCEMBALAGEM[VOLUME])),
+    "altura",      CALCULATE(MAX(PCEMBALAGEM[ALTURA])),
+    "largura",     CALCULATE(MAX(PCEMBALAGEM[LARGURA])),
+    "comprimento", CALCULATE(MAX(PCEMBALAGEM[COMPRIMENTO])),
+    "pesobruto",   CALCULATE(MAX(PCEMBALAGEM[PESOBRUTO]))
+)"""
 
 
 # ───── Venda real por produto — roda no dataset RCA (medidas nativas) ─────

@@ -17,10 +17,10 @@ from datetime import datetime, date, timedelta
 # ───────────────────────── parâmetros (configuráveis) ─────────────────────────
 DEFAULTS = {
     "giro_base":        "media3",  # media3 (oficial) | m1 (último mês)
-    "base_estoque":     "endereco",  # endereco (WMS, oficial) | gerencial (QTESTGER)
+    "base_estoque":     "gerencial",  # gerencial (QTESTGER cru, oficial v3) | endereco (WMS)
     "lead_time":        10,        # dias (fallback quando o fornecedor não tem prazo)
     "dias_seguranca":   25,        # dias de estoque de segurança
-    "cobertura_total":  45,        # dias-alvo de cobertura
+    "cobertura_total":  30,        # dias-alvo de cobertura (oficial v3 — N2 da planilha)
     "ruptura_dias":     30,        # cobertura <= isso = ruptura
     "horizonte_val":    30,        # janela de risco de vencimento
     "parado_atencao":   60,        # dias sem venda
@@ -141,12 +141,36 @@ def _round(v, n=2):
     return round(v, n) if isinstance(v, (int, float)) else v
 
 
+# ───────────────────────── pedido de compra real (Winthor) ─────────────────────────
+def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
+    """Pedido de compra REAL em ABERTO por produto, a partir do Winthor (PCPEDIDO×PCITEM).
+    Ativo = emitido nos últimos `dias` (DTEMISSAO) — regra v3 da planilha (validada).
+    Aberto = max(0, QTPEDIDA − QTENTREGUE): o gerencial já reflete o recebido, então só o
+    aberto entra na projeção (não duplica estoque). Retorna {cod: qt_aberta}."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    ativos = {int(_n(r.get("NUMPED"))) for r in cab_rows
+              if (_parse_dt(r.get("DTEMISSAO")) or date.min) >= corte}
+    out = {}
+    for r in item_rows:
+        if int(_n(r.get("NUMPED"))) not in ativos:
+            continue
+        aberto = _n(r.get("qtped")) - _n(r.get("qtentregue"))
+        if aberto <= 0:
+            continue
+        cod = int(_n(r.get("CODPROD")))
+        out[cod] = out.get(cod, 0.0) + aberto
+    return out
+
+
 # ───────────────────────── produtos ─────────────────────────
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
-                       hoje=None, venda_mensal_map=None):
+                       hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
+    ja_pedida_map: {cod: qt} pedido de compra REAL em ABERTO (Winthor, qtped−entregue, 180d).
+    embalagem_map: {cod: {qtunit, volume, ...}} caixa/cubagem do PCEMBALAGEM.
     Mantém só produtos do cadastro (revenda/não-FL)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
@@ -170,11 +194,21 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         qt_end     = _n(end_map.get(cod))
 
         # QTDISP conforme a base escolhida
-        if base == "gerencial":
-            qtdisp = qtestger - qtreserv - qtbloq
-        else:  # endereco (oficial)
+        # gerencial = QTESTGER cru (oficial v3 — bate com a planilha do diretor; NÃO subtrai
+        # reserva/bloqueio). endereco = estoque WMS endereçado (usado só na validade/FEFO).
+        if base == "endereco":
             qtdisp = qt_end
-        valor = qtdisp * custofin
+        else:  # gerencial (default v3)
+            qtdisp = qtestger
+        # valor financeiro com piso em zero: estoque negativo é erro de saldo, não vale R$ negativo
+        # (alinha o total ao BASE PRODUTOS; mantém qtdisp negativo visível na tela)
+        valor = max(0.0, qtdisp) * custofin
+
+        # pedido de compra REAL em aberto (Winthor) — já descontado o que foi entregue
+        qtd_ja_pedida = _n((ja_pedida_map or {}).get(cod))
+        # caixa: QTUNIT do PCEMBALAGEM (oficial v3), fallback QTUNITCX do cadastro
+        emb = (embalagem_map or {}).get(cod) or {}
+        qtunit_emb = _n(emb.get("qtunit"))
 
         giro_media3 = _giro_mensal(r, params["giro_base"])
         serie_am = (venda_mensal_map or {}).get(cod)
@@ -211,21 +245,25 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         est_seg = giro_dia * params["dias_seguranca"]
         rop = giro_dia * lead + est_seg
         est_alvo = giro_dia * params["cobertura_total"]
-        # posição efetiva = disponível + o que já está a caminho (evita comprar de novo o já pedido)
-        posicao = qtdisp + qttransito + qtpend
-        sugestao = max(0.0, est_alvo - posicao)
+        # posição efetiva = disponível + pedido de compra REAL em aberto (Winthor).
+        # Como o gerencial já reflete o que foi recebido, o "já pedido" é só o ABERTO
+        # (qtped−entregue) — evita comprar de novo o que já está pedido e não duplica estoque.
+        estoque_projetado = qtdisp + qtd_ja_pedida
+        cobertura_proj = (estoque_projetado / giro_dia) if giro_dia > 0 and estoque_projetado > 0 else None
+        sugestao = max(0.0, est_alvo - estoque_projetado)
 
+        # prioridade de abastecimento sobre o ESTOQUE PROJETADO (metodologia v3)
+        lead_un = giro_dia * lead
+        seg_un = giro_dia * params["dias_seguranca"]
         if giro_dia <= 0:
             status_abast = "sem_giro" if qtdisp > 0 else "ok"
-        elif qtdisp <= 0:
+        elif estoque_projetado <= lead_un:
             status_abast = "urgente"
-        elif cobertura <= lead:
-            status_abast = "urgente"
-        elif cobertura <= lead + params["dias_seguranca"]:
+        elif estoque_projetado <= lead_un + seg_un:
             status_abast = "alta"
-        elif cobertura <= params["cobertura_total"]:
+        elif estoque_projetado < est_alvo:
             status_abast = "atencao"
-        elif cobertura > params["excesso_cob"]:
+        elif cobertura_proj is not None and cobertura_proj > params["excesso_cob"]:
             status_abast = "excesso"
         else:
             status_abast = "ok"
@@ -291,10 +329,38 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             cv, xyz = None, None
 
         qtunitcx = _n(cad.get("QTUNITCX"))
-        # arredondamento da sugestão p/ caixa fechada (QTUNITCX), quando ligado
+        # caixa oficial v3 = QTUNIT do PCEMBALAGEM; fallback no QTUNITCX do cadastro
+        caixa = qtunit_emb if qtunit_emb > 1 else qtunitcx
+        # sugestão sempre disponível em CAIXAS (arredondada p/ cima) — metodologia v3
         sugestao_bruta = sugestao
-        sugestao_un, sugestao_cx = (arredonda_caixa(sugestao, qtunitcx) if arred_cx else (sugestao, None))
-        sugestao = sugestao_un
+        sugestao_cx = math.ceil(sugestao / caixa) if (caixa > 1 and sugestao > 0) else (1 if sugestao > 0 else 0)
+        if arred_cx and caixa > 1 and sugestao > 0:
+            sugestao = sugestao_cx * caixa  # sugestão em unidades, arredondada p/ caixa fechada
+        # valor da compra líquida sugerida (sobre caixa fechada × custo)
+        valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao * custofin)
+
+        # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
+        tem_compra = sugestao_cx > 0
+        if qtdisp <= 0:
+            if qtd_ja_pedida <= 0:
+                status_exec = "ruptura_sem_pedido"
+            else:
+                status_exec = "ruptura_pedido_parcial" if tem_compra else "ruptura_pedido_cobre"
+        elif tem_compra:
+            if qtd_ja_pedida > 0:
+                status_exec = "compra_complementar"
+            else:
+                status_exec = {"urgente": "compra_urgente", "alta": "compra_alta"}.get(status_abast, "programar_compra")
+        else:
+            status_exec = "pedido_cobre" if qtd_ja_pedida > 0 else "estoque_ok"
+        if not tem_compra:
+            acao_rec = "acompanhar_entrega" if qtd_ja_pedida > 0 else "sem_compra"
+        elif estoque_projetado <= lead_un:
+            acao_rec = "comprar_imediato"
+        elif estoque_projetado <= lead_un + seg_un:
+            acao_rec = "negociar_pedido"
+        else:
+            acao_rec = "programar_compra"
         out.append({
             "codprod": cod,
             "descricao": cad.get("DESCRICAO") or f"PRODUTO {cod}",
@@ -330,6 +396,13 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "rop": _round(rop), "est_seguranca": _round(est_seg),
             "est_alvo": _round(est_alvo), "sugestao_compra": _round(sugestao),
             "sugestao_bruta": _round(sugestao_bruta), "sugestao_cx": sugestao_cx,
+            "caixa": _round(caixa) if caixa else None,
+            "qtd_ja_pedida": _round(qtd_ja_pedida),
+            "estoque_projetado": _round(estoque_projetado),
+            "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
+            "valor_sugerido_liq": _round(valor_sugerido_liq),
+            "status_exec": status_exec, "acao_rec": acao_rec,
+            "cubagem_caixa_m3": _round(_n(emb.get("volume")), 5) if emb.get("volume") else None,
             "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,
             "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,
@@ -541,6 +614,169 @@ def por_comprador(produtos):
         })
     saida.sort(key=lambda x: x["venda"], reverse=True)
     return saida
+
+
+# ───────────────────────── orçamento de compras (pedido real Winthor) ─────────────────────────
+def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
+                      pct=0.65, hoje=None, meta_override=None):
+    """Orçamento de compras a partir do pedido de compra REAL (PCPEDIDO).
+    cab: linhas do cabeçalho; venda_comp: {nome_comprador: venda_liq_30d} (p/ a meta);
+    comp_map: {matricula:nome}; forn_map: {codfornec: row}; mes: 'YYYY-MM'.
+    meta = pct × venda_liq (override manual opcional); realizado = Σ VLTOTAL dos pedidos do mês;
+    aberto = pedidos do mês ainda não recebidos (sem DTENTRADAESTOQUE)."""
+    hoje = hoje or date.today()
+    todos = (not comprador or comprador == "TODOS")
+    pedidos = []
+    realizado = aberto = 0.0
+    for r in cab:
+        nome = comp_map.get(int(_n(r.get("CODCOMPRADOR"))))
+        if not todos and nome != comprador:
+            continue
+        dtem = _parse_dt(r.get("DTEMISSAO"))
+        dtprev = _parse_dt(r.get("DTPREVENT"))   # previsão de entrada no estoque
+        vlt = _n(r.get("VLTOTAL"))
+        vle = _n(r.get("VLENTREGUE"))            # valor já entregue (DTENTRADAESTOQUE é vazio aqui)
+        aberto_val = max(0.0, vlt - vle)
+        # recebido se o que falta entregar é desprezível (tolera resíduo de centavos)
+        recebido = vlt > 0 and aberto_val <= max(1.0, vlt * 0.005)
+        if recebido:
+            aberto_val = 0.0
+        no_mes = bool(dtem) and dtem.strftime("%Y-%m") == mes
+        if no_mes:
+            realizado += vlt                     # comprado válido = tudo que foi pedido no mês
+            aberto += aberto_val                 # comprometido aberto = ainda não entregue
+        dias_prev = (dtprev - hoje).days if (dtprev and not recebido) else None
+        if recebido:
+            status_prazo = "recebido"
+        elif dias_prev is None:
+            status_prazo = "sem_prev"
+        elif dias_prev < 0:
+            status_prazo = "atrasado"
+        elif dias_prev <= 7:
+            status_prazo = "chega_7"
+        else:
+            status_prazo = "no_prazo"
+        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
+        pedidos.append({
+            "numped": int(_n(r.get("NUMPED"))),
+            "data_pedido": dtem.isoformat() if dtem else None,
+            "mes": dtem.strftime("%Y-%m") if dtem else None,
+            "codfornec": int(_n(r.get("CODFORNEC"))),
+            "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
+            "comprador": nome,
+            "valor": _round(vlt),
+            "valor_aberto": _round(aberto_val),
+            "dt_previsao": dtprev.isoformat() if dtprev else None,
+            "dias_para_chegar": dias_prev,
+            "status_prazo": status_prazo,
+            "recebido": recebido,
+        })
+    if meta_override is not None and _n(meta_override) > 0:
+        meta = _n(meta_override)
+    elif todos:
+        meta = sum(_n(v) for v in venda_comp.values()) * pct
+    else:
+        meta = _n(venda_comp.get(comprador)) * pct
+    saldo = meta - realizado
+    abertos = [p for p in pedidos if not p["recebido"]]
+    abertos.sort(key=lambda p: (p["dias_para_chegar"] if p["dias_para_chegar"] is not None else 9999))
+    pedidos.sort(key=lambda p: (p["data_pedido"] or ""), reverse=True)
+    resumo = {
+        "mes": mes, "comprador": comprador, "pct": pct,
+        "meta": _round(meta), "comprado": _round(realizado), "aberto": _round(aberto),
+        "saldo": _round(saldo),
+        "pct_consumido": _round(realizado / meta, 4) if meta > 0 else None,
+        "n_pedidos": sum(1 for p in pedidos if p["mes"] == mes),
+        "n_abertos": len(abertos),
+        "n_atrasados": sum(1 for p in abertos if p["status_prazo"] == "atrasado"),
+        "n_chega7": sum(1 for p in abertos if p["status_prazo"] == "chega_7"),
+        "valor_aberto": _round(sum(p["valor_aberto"] for p in abertos)),
+        "meta_auto": meta_override is None,
+    }
+    return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos}
+
+
+# ───────────────────────── logística / cubagem (pedido real) ─────────────────────────
+def vol_unitario(cad):
+    """Volume unitário em m³ (PCPRODUT.VOLUME; fallback dims/1e6). 0 se sem cadastro."""
+    v = _n((cad or {}).get("VOLUME"))
+    if v > 0:
+        return v
+    a, l, c = _n(cad.get("ALTURAM3")), _n(cad.get("LARGURAM3")), _n(cad.get("COMPRIMENTOM3"))
+    return (a * l * c) / 1e6 if (a > 0 and l > 0 and c > 0) else 0.0
+
+
+def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, hoje=None,
+                      capacidade_m3=60.0, baixa_ate=0.1, dias=180):
+    """Cubagem/ocupação por pedido em ABERTO (o que ainda vai chegar).
+    cubagem = Σ (qtd_aberta × volume_unitário); ocupação = cubagem ÷ capacidade do veículo."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    cab_by = {}
+    for r in cab:
+        dtem = _parse_dt(r.get("DTEMISSAO"))
+        if not dtem or dtem < corte:
+            continue
+        vlt, vle = _n(r.get("VLTOTAL")), _n(r.get("VLENTREGUE"))
+        if max(0.0, vlt - vle) <= max(1.0, vlt * 0.005):
+            continue  # já recebido
+        cab_by[int(_n(r.get("NUMPED")))] = r
+    ped = {}
+    for r in itens:
+        np_ = int(_n(r.get("NUMPED")))
+        if np_ not in cab_by:
+            continue
+        oq = _n(r.get("qtped")) - _n(r.get("qtentregue"))
+        if oq <= 0:
+            continue
+        cod = int(_n(r.get("CODPROD")))
+        cad = prod_map.get(cod) or {}
+        uv = vol_unitario(cad)
+        cx = _n((embalagem_map or {}).get(cod, {}).get("qtunit")) or _n(cad.get("QTUNITCX")) or 1
+        d = ped.setdefault(np_, {"cubagem": 0.0, "skus": 0, "caixas": 0.0, "unid": 0.0, "sem_vol": 0})
+        d["cubagem"] += oq * uv
+        d["unid"] += oq
+        d["caixas"] += (oq / cx if cx > 1 else oq)
+        d["skus"] += 1
+        if uv <= 0:
+            d["sem_vol"] += 1
+    out = []
+    for np_, d in ped.items():
+        r = cab_by[np_]
+        valor_aberto = max(0.0, _n(r.get("VLTOTAL")) - _n(r.get("VLENTREGUE")))
+        cub = d["cubagem"]
+        ocup = (cub / capacidade_m3) if capacidade_m3 > 0 else 0.0
+        if cub <= 0:
+            status = "sem_cubagem"
+        elif ocup <= baixa_ate:
+            status = "baixa"
+        elif ocup <= 0.3:
+            status = "media"
+        else:
+            status = "ok"
+        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
+        dtprev = _parse_dt(r.get("DTPREVENT"))
+        out.append({
+            "numped": np_,
+            "data_pedido": (_parse_dt(r.get("DTEMISSAO")) or date.min).isoformat(),
+            "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
+            "comprador": comp_map.get(int(_n(r.get("CODCOMPRADOR")))),
+            "skus": d["skus"], "caixas": _round(d["caixas"]), "unidades": _round(d["unid"]),
+            "cubagem_m3": _round(cub, 3), "valor_aberto": _round(valor_aberto),
+            "valor_m3": _round(valor_aberto / cub) if cub > 0 else None,
+            "ocupacao": _round(ocup, 3), "status": status,
+            "sem_cubagem_itens": d["sem_vol"],
+            "dt_previsao": dtprev.isoformat() if dtprev else None,
+        })
+    out.sort(key=lambda x: x["cubagem_m3"], reverse=True)
+    resumo = {
+        "n_pedidos": len(out),
+        "cubagem_total": _round(sum(p["cubagem_m3"] for p in out), 2),
+        "valor_total": _round(sum(p["valor_aberto"] for p in out)),
+        "n_baixa": sum(1 for p in out if p["status"] == "baixa"),
+        "capacidade_m3": capacidade_m3, "baixa_ate": baixa_ate,
+    }
+    return {"resumo": resumo, "pedidos": out}
 
 
 # ───────────────────────── validade / FEFO ─────────────────────────

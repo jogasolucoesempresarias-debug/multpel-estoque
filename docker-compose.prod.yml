@@ -9,6 +9,7 @@ services:
       - proxy
       - estoque-internal
     environment:
+      TZ: "America/Sao_Paulo"                   # date.today()/janela 180d/mês/previsões na hora BRT
       PORT: "5001"
       SECRET_KEY: ${SECRET_KEY}
       ESTOQUE_SENHA: ${ESTOQUE_SENHA}          # senha única que você passa pro sócio

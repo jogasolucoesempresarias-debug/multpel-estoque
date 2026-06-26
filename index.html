@@ -59,7 +59,7 @@
   <div class="row">
     <div class="fb-group"><label>Lead time (dias)</label><input type="number" id="p-lead" value="10" style="width:80px"></div>
     <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>
-    <div class="fb-group"><label>Cobertura alvo (dias)</label><input type="number" id="p-cob" value="45" style="width:80px"></div>
+    <div class="fb-group"><label>Cobertura alvo (dias)</label><input type="number" id="p-cob" value="30" style="width:80px"></div>
     <div class="fb-group"><label>Horizonte validade (dias)</label><input type="number" id="p-hor" value="30" style="width:80px"></div>
     <div class="fb-group"><label>Parado: dias sem venda</label><input type="number" id="p-parado" value="60" style="width:80px"></div>
     <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
@@ -83,18 +83,28 @@
   <div class="count-line">Giro: média 3m (oficial do TI) · forecast = média móvel da venda real (RCA) · sazonal = + fator do mês (ano-a-ano, 24m). Caixa fechada = sugestão arredondada pra cima em caixas (QTUNITCX).</div>
 </div>
 
+<div class="navgroups" id="navgroups">
+  <div class="navgroup active" data-group="visao">Visão</div>
+  <div class="navgroup" data-group="comprar">Comprar</div>
+  <div class="navgroup" data-group="pedidos">Pedidos</div>
+  <div class="navgroup" data-group="estoque">Estoque</div>
+  <div class="navgroup" data-group="analise">Análise</div>
+</div>
 <div class="tabs" id="tabs">
-  <div class="tab active" data-view="cockpit">Cockpit</div>
-  <div class="tab" data-view="ruptura">Ruptura</div>
-  <div class="tab" data-view="reposicao">Reposição</div>
-  <div class="tab" data-view="plano">Plano reposição</div>
-  <div class="tab" data-view="validade">Validade</div>
-  <div class="tab" data-view="parado">Parado</div>
-  <div class="tab" data-view="orcamento">Orçamento</div>
-  <div class="tab" data-view="comprasvendas">Compras × Vendas</div>
-  <div class="tab" data-view="abcxyz">ABC-XYZ</div>
-  <div class="tab" data-view="fornecedores">Fornecedores</div>
-  <div class="tab" data-view="produtos">Produtos</div>
+  <div class="tab active" data-view="cockpit" data-group="visao">Cockpit</div>
+  <div class="tab" data-view="reposicao" data-group="comprar">Abastecimento</div>
+  <div class="tab" data-view="ruptura" data-group="comprar">Cobertura crítica</div>
+  <div class="tab" data-view="estoque_zero" data-group="comprar">Estoque zerado</div>
+  <div class="tab" data-view="plano" data-group="comprar">Plano reposição</div>
+  <div class="tab" data-view="orcamento" data-group="pedidos">Orçamento</div>
+  <div class="tab" data-view="logistica" data-group="pedidos">Logística</div>
+  <div class="tab" data-view="parado" data-group="estoque">Parado</div>
+  <div class="tab" data-view="validade" data-group="estoque">Validade</div>
+  <div class="tab" data-view="comprasvendas" data-group="analise">Compras × Vendas</div>
+  <div class="tab" data-view="fornecedores" data-group="analise">Fornecedores</div>
+  <div class="tab" data-view="abcxyz" data-group="analise">ABC-XYZ</div>
+  <div class="tab" data-view="produtos" data-group="analise">Produtos</div>
+  <div class="tab" data-view="qualidade" data-group="analise">Qualidade da base</div>
 </div>
 
 <main>
@@ -102,15 +112,18 @@
   <div id="content" style="display:none">
     <section class="view active" id="v-cockpit"></section>
     <section class="view" id="v-ruptura"></section>
+    <section class="view" id="v-estoque_zero"></section>
     <section class="view" id="v-reposicao"></section>
     <section class="view" id="v-plano"></section>
     <section class="view" id="v-validade"></section>
     <section class="view" id="v-parado"></section>
     <section class="view" id="v-orcamento"></section>
+    <section class="view" id="v-logistica"></section>
     <section class="view" id="v-comprasvendas"></section>
     <section class="view" id="v-abcxyz"></section>
     <section class="view" id="v-fornecedores"></section>
     <section class="view" id="v-produtos"></section>
+    <section class="view" id="v-qualidade"></section>
   </div>
 </main>
 

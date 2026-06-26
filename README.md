@@ -73,11 +73,25 @@ docker service update \
 
 ### Diagnóstico
 ```bash
-docker stack services multpel-estoque                          # status
+docker stack services multpel-estoque                          # status (postgres deve ser 1/1)
 docker service logs -f --tail 200 multpel-estoque_estoque-app  # logs do app
 docker service logs --tail 50 multpel-estoque_estoque-postgres # logs do banco
 curl -I https://estoque.jogasolucoes.com.br/health       # liveness
 ```
+
+### Troubleshooting: "Orçamento indisponível (Postgres off): HTTP 503"
+O app inteiro funciona, **só** Orçamento/Planos (que usam Postgres) caem. O app loga o motivo exato:
+```bash
+docker service logs --tail 60 multpel-estoque_estoque-app | grep -i store
+```
+| Mensagem | Causa | Correção |
+|---|---|---|
+| `could not translate host name "estoque-postgres"` | app e banco em redes diferentes / serviço do banco não subiu | os 2 serviços precisam compartilhar a rede `estoque-internal` |
+| `password authentication failed` | `DB_PASSWORD` diferente entre `estoque-app` e `estoque-postgres` | mesma senha nos dois (a var `DB_PASSWORD` da stack alimenta ambos) |
+| `Connection refused` | postgres subindo/caiu | conferir réplica 1/1 e logs do `estoque-postgres` |
+| `estoque-postgres` ausente / `0/1` | stack subiu sem o serviço do banco | re-subir a stack com o `docker-compose.prod.yml` completo |
+
+Não precisa reiniciar o app depois de arrumar o banco: ele reconecta sozinho na próxima chamada (`store.ensure()`).
 
 ---
 

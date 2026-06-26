@@ -33,6 +33,14 @@ const sugCx = (un, qtcx) => un==null ? '—' : ((qtcx>1 && un>0) ? `${int(Math.c
 const dt = s => s ? s.split('-').reverse().join('/') : '—';
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = (v,txt) => v==null||v===''?'':`<span class="badge b-${String(v).replace(/[^a-z0-9_-]/gi,'')}">${esc(txt!=null?txt:v)}</span>`;
+// status executivo do abastecimento (metodologia v3) → rótulo + cor
+const STAT_EXEC={ruptura_sem_pedido:['Ruptura s/ pedido','#ef4444'],ruptura_pedido_parcial:['Ruptura · pedido parcial','#f97316'],ruptura_pedido_cobre:['Ruptura · pedido cobre','#eab308'],compra_urgente:['Compra urgente','#ef4444'],compra_alta:['Compra alta','#f97316'],compra_complementar:['Compra complementar','#38bdf8'],programar_compra:['Programar compra','#a78bfa'],pedido_cobre:['Pedido cobre','#22c55e'],estoque_ok:['Estoque OK','#22c55e']};
+const statExec = v => { const s=STAT_EXEC[v]; return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—'; };
+// sugestão em caixas a partir do campo já calculado no servidor (sugestao_cx) + unidades
+const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` · ${int((p.sugestao_cx||0)*(p.caixa||1))} un`:''}` : '—');
+// navegação em 2 níveis: grupo → telas
+const NAV={visao:['cockpit'],comprar:['reposicao','ruptura','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['parado','validade'],analise:['comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
   const mx=Math.max(...serie,1), w=46,h=16, st=w/(serie.length-1||1);
@@ -109,7 +117,8 @@ function agg(P){
   const parados=P.filter(p=>p.status_parado);
   const repor=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const rupt=P.filter(p=>p.status_ruptura);
-  const faixas=FAIXAS.map(([n,lo,hi])=>{const it=comGiro.filter(p=>p.cobertura!=null&&p.cobertura>=lo&&p.cobertura<=hi);return{faixa:n,qt:it.length,valor:sum(it,p=>p.valor)};});
+  const zerados=P.filter(p=>p.estoque_zero&&(p.giro_dia||0)>0);   // ruptura real (estoque ≤ 0 e giro > 0)
+  const faixas=FAIXAS.map(([n,lo,hi])=>{const it=comGiro.filter(p=>p.cobertura!=null&&Math.ceil(p.cobertura)>=lo&&Math.ceil(p.cobertura)<=hi);return{faixa:n,qt:it.length,valor:sum(it,p=>p.valor)};});
   faixas.push({faixa:'sem giro',qt:semGiro.length,valor:sum(semGiro,p=>p.valor)});
   const abc={}; ['A','B','C'].forEach(c=>{const it=P.filter(p=>p.curva_abc===c);abc[c]={qt:it.length,valor:sum(it,p=>p.valor)};});
   const matriz={}; P.forEach(p=>{if(p.abc_xyz){(matriz[p.abc_xyz]=matriz[p.abc_xyz]||{qt:0,valor:0});matriz[p.abc_xyz].qt++;matriz[p.abc_xyz].valor+=(p.valor||0);}});
@@ -119,7 +128,8 @@ function agg(P){
     n:P.length,com_estoque:P.filter(p=>(p.qtdisp||0)>0).length,com_giro:comGiro.length,sem_giro:semGiro.length,
     valor_parado:sum(parados,p=>p.valor),valor_sem_giro:sum(semGiro,p=>p.valor),faixas,abc,matriz,
     parado:{atencao:cnt('status_parado','atencao'),critico:cnt('status_parado','critico'),muito_critico:cnt('status_parado','muito_critico')},
-    ruptura:{total:rupt.length,valor:sum(rupt,p=>p.valor),f0_15:rupt.filter(p=>p.status_ruptura==='0-15').length},
+    ruptura:{total:rupt.length,valor:sum(rupt,p=>p.valor),f0_15:rupt.filter(p=>p.status_ruptura==='0-15').length,
+      zerados:zerados.length,valor_zerados:sum(zerados,p=>p.valor)},
     repor:{n:repor.length,valor:sum(repor,p=>(p.sugestao_compra||0)*(p.custo_unit||0)),qt:sum(repor,p=>p.sugestao_compra)}};
 }
 
@@ -166,13 +176,14 @@ function renderCockpit(P){
      ${kpi('Valor em estoque',money(k.valor_total),int(k.com_estoque)+' itens (compras)',C.accent)}
      ${kpi('Venda '+periodoLbl,money(k.venda_total),'lucro '+moneyK(k.lucro_total),C.green)}
      ${kpi('Margem',k.margem_total!=null?dec(k.margem_total,1)+'%':'—','venda × custo',C.accent2)}
-     ${kpi('Em ruptura',int(k.ruptura.total),moneyK(k.ruptura.valor),C.red)}
+     ${kpi('Em ruptura',int(k.ruptura.zerados),'estoque ≤ 0 c/ giro',C.red)}
      ${kpi('A comprar',int(k.repor.n),'sug. '+moneyK(k.repor.valor),C.orange)}
      ${kpi('Capital parado',moneyK(k.valor_parado),dec(k.valor_total?k.valor_parado/k.valor_total*100:0,1)+'% do estoque',C.purple)}
    </div>
    <h2 class="section"><span>Alertas de ação</span></h2>
    <div class="alerts">
-     ${alertCard(k.ruptura.f0_15,'Ruptura crítica (≤15d)',k.ruptura.valor,C.red,'ruptura',{ruptura:'1'})}
+     ${alertCard(k.ruptura.zerados,'Em ruptura (estoque ≤ 0)',k.ruptura.valor_zerados,C.red,'estoque_zero',{})}
+     ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{ruptura:'1'})}
      ${alertCard(k.repor.n,'Comprar (cobertura baixa)',k.repor.valor,C.orange,'reposicao',{})}
      ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
@@ -206,25 +217,67 @@ function renderRuptura(P){
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'cobertura',label:'Cob.',num:true,fmt:cob},
     colGiroSpark,{key:'sugestao_compra',label:'Sugerido',num:true,fmt:int},
     {key:'status_ruptura',label:'Faixa',badge:true,map:v=>v+'d'}];
-  $('#v-ruptura').innerHTML=head('Ruptura — cobertura ≤ 30 dias','ruptura')+
-    `<div class="count-line">Item em ruptura quando a cobertura (estoque ÷ giro diário) fica ≤ 30 dias.</div>`+renderTable(rup,cols,'ruptura');
+  $('#v-ruptura').innerHTML=head('Cobertura crítica — cobertura ≤ 30 dias','ruptura')+
+    `<div class="count-line">Atenção de abastecimento: cobertura (estoque ÷ giro diário) ≤ 30 dias. Ruptura real (estoque ≤ 0) fica na aba <b>Estoque zerado</b>.</div>`+renderTable(rup,cols,'ruptura');
+}
+
+function renderEstoqueZero(P){
+  const z=P.filter(p=>(p.qtdisp||0)<=0);
+  const neg=z.filter(p=>(p.qtdisp||0)<0), comGiro=z.filter(p=>(p.giro_dia||0)>0), comPed=z.filter(p=>(p.qtd_ja_pedida||0)>0);
+  const cols=[colCod,colProd,colForn,
+    {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
+    {key:'qtdisp',label:'Estoque',num:true,fmt:int},
+    {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
+    colGiroSpark,
+    {key:'sugestao_cx',label:'Sugerido (cx)',num:true,html:p=>sugCxN(p)},
+    {key:'status_exec',label:'Status',html:p=>statExec(p.status_exec)}];
+  $('#v-estoque_zero').innerHTML=head('Estoque zerado e negativo')+
+    `<div class="kpi-grid">
+       ${kpi('Zerados / negativos',int(z.length),int(neg.length)+' negativos',C.red)}
+       ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
+       ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
+     </div>
+     <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor).</div>`+
+    renderTable(z,cols,'estoque_zero');
+}
+
+const QUAL_CHK={
+  sem_custo:{lbl:'Sem custo',cor:'red',fn:p=>(p.custo_unit||0)<=0},
+  sem_fornecedor:{lbl:'Sem fornecedor',cor:'orange',fn:p=>p.codfornec==null},
+  sem_comprador:{lbl:'Sem comprador',cor:'purple',fn:p=>p.codcomprador==null},
+  sem_giro:{lbl:'Sem giro c/ estoque',cor:'yellow',fn:p=>(p.giro_dia||0)<=0&&(p.qtdisp||0)>0},
+  estoque_negativo:{lbl:'Estoque negativo',cor:'red',fn:p=>(p.qtdisp||0)<0},
+};
+function renderQualidade(P){
+  const keys=Object.keys(QUAL_CHK);
+  const probs=p=>keys.filter(k=>QUAL_CHK[k].fn(p));
+  const flagged=P.map(p=>({p,probs:probs(p)})).filter(x=>x.probs.length).sort((a,b)=>b.probs.length-a.probs.length);
+  const counts={}; keys.forEach(k=>counts[k]=P.filter(QUAL_CHK[k].fn).length);
+  const badge1=k=>`<span class="badge" style="background:${C[QUAL_CHK[k].cor]}22;color:${C[QUAL_CHK[k].cor]}">${QUAL_CHK[k].lbl}</span>`;
+  $('#v-qualidade').innerHTML=head('Qualidade da base — produtos com cadastro/saldo inconsistente')+
+    `<div class="kpi-grid">${keys.map(k=>kpi(QUAL_CHK[k].lbl,int(counts[k]),'',C[QUAL_CHK[k].cor])).join('')}</div>
+     <div class="count-line">${int(flagged.length)} produtos com ao menos um problema. Corrigir na origem (Winthor) melhora todas as telas.</div>
+     <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th><th class="num">Estoque</th><th class="num">Custo</th><th class="num">Giro/mês</th><th>Problemas</th></tr></thead>
+     <tbody>${flagged.slice(0,400).map(({p,probs})=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.custo_unit?money(p.custo_unit):'—'}</td><td class="num">${int(p.giro_mes)}</td><td>${probs.map(badge1).join(' ')}</td></tr>`).join('')}</tbody></table>
+     ${flagged.length>400?`<div class="count-line">Mostrando 400 de ${int(flagged.length)}.</div>`:''}</div>`;
+  $('#v-qualidade').querySelectorAll('tbody tr').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
 }
 
 function renderReposicao(P){
   const rep=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const suspensos=P.filter(p=>p.compra_suspensa).sort((a,b)=>(b.sugestao_compra*b.custo_unit)-(a.sugestao_compra*a.custo_unit));
   // agrupa por fornecedor
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.sugestao_compra||0)*(p.custo_unit||0);});
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0);});
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   const el=$('#v-reposicao');
-  el.innerHTML=head('Reposição — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão = estoque-alvo (giro/dia × cobertura alvo) − (disponível + trânsito + pendente). Lead time usa o prazo do fornecedor quando houver.</div>`+
+  el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
+    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × ${int(S.params.cob)}d) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. Lead time usa o prazo do fornecedor quando houver.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Sugerido</th><th class="num">Valor</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura||0)-(b.cobertura||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${cob(p.cobertura)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCx(p.sugestao_compra,p.qtunitcx)}</td><td class="num">${money((p.sugestao_compra||0)*(p.custo_unit||0))}</td></tr>`).join('')}</tbody></table></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
@@ -433,32 +486,67 @@ function renderComprasVendas(P){
 }
 
 /* ───────── Orçamento ───────── */
+const PRAZO_BADGE={atrasado:['Atrasado','#ef4444'],chega_7:['Chega ≤7d','#f97316'],no_prazo:['No prazo','#22c55e'],recebido:['Recebido','#22c55e'],sem_prev:['Sem previsão','#64748b']};
+const prazoBadge=v=>{const s=PRAZO_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
+
 async function renderOrcamento(){
   const el=$('#v-orcamento');
   const comp=S.compradorNome||'TODOS';
   el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
   let o; try{ o=await getJSON('/api/orcamento?comprador='+encodeURIComponent(comp)); }
-  catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível (Postgres off): ${e.message}</div>`; return; }
+  catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
   S.orcamento=o; const r=o.resumo;
-  const prog=r.pct!=null?Math.min(100,r.pct*100):0;
+  const prog=r.pct_consumido!=null?Math.min(100,r.pct_consumido*100):0;
   const cor=prog>=100?C.red:(prog>=85?C.orange:C.green);
+  const abertos=o.abertos||[], manuais=o.manuais||[];
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}</span>
-      <span><button class="btn sm" id="btn-meta">Definir meta</button> <button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
+      <span><button class="btn sm" id="btn-meta">Ajustar meta</button> <button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
     <div class="kpi-grid">
-      ${kpi('Meta do mês',money(r.meta),'',C.accent)}
-      ${kpi('Comprado',money(r.comprado),r.n_pedidos+' pedidos',C.accent2)}
-      ${kpi('Saldo',money(r.saldo),'',r.saldo<0?C.red:C.green)}
-      ${kpi('Consumido',r.pct!=null?pct(r.pct):'—','',cor)}
+      ${kpi('Meta do mês',money(r.meta),r.meta_auto?'65% da venda líq. 30d':'meta manual',C.accent)}
+      ${kpi('Comprado (Winthor)',money(r.comprado),r.n_pedidos+' pedidos',C.accent2)}
+      ${kpi('Saldo',money(r.saldo),'comprometido aberto '+moneyK(r.aberto),r.saldo<0?C.red:C.green)}
+      ${kpi('Consumido',r.pct_consumido!=null?pct(r.pct_consumido):'—','',cor)}
     </div>
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
-      <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')}</div></div>
-    <div class="panel"><h3>Pedidos lançados</h3>
-      ${o.pedidos.length?`<div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Pedido</th><th class="num">Valor</th><th>Prazo</th><th>Status</th><th></th></tr></thead>
-      <tbody>${o.pedidos.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td>${pe.prazo_dias||''}${pe.prazo_dias?'d':''}</td><td>${badge((pe.status||'').toLowerCase(),pe.status)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf" title="Baixar pedido em PDF">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido lançado neste mês.</div>'}
-    </div>`;
+      <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).</div></div>
+    ${(r.n_atrasados||r.n_chega7)?`<div class="alerts">
+      ${r.n_atrasados?alertCard(r.n_atrasados,'Entregas atrasadas',sum2(abertos.filter(p=>p.status_prazo==='atrasado'),'valor_aberto'),C.red,'orcamento',{}):''}
+      ${r.n_chega7?alertCard(r.n_chega7,'Chegam em ≤7 dias',sum2(abertos.filter(p=>p.status_prazo==='chega_7'),'valor_aberto'),C.orange,'orcamento',{}):''}
+    </div>`:''}
+    <div class="panel"><h3>Acompanhamento de pedidos em aberto <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
+      ${abertos.length?`<div class="tbl-wrap"><table><thead><tr><th>Nº</th><th>Data</th><th>Fornecedor</th><th>Comprador</th><th class="num">Valor</th><th class="num">A entregar</th><th>Previsão entrega</th><th>Status</th></tr></thead>
+      <tbody>${abertos.map(pe=>`<tr><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+    </div>
+    ${manuais.length?`<div class="panel" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Pedido</th><th class="num">Valor</th><th></th></tr></thead>
+      <tbody>${manuais.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor).</div></div>`:''}`;
   $('#btn-meta').onclick=()=>modalMeta(r);
   $('#btn-pedido').onclick=()=>modalPedido(null);
   el.querySelectorAll('[data-delped]').forEach(b=>b.onclick=async()=>{ await postJSON('/api/pedidos/'+b.dataset.delped,{}, 'DELETE'); toast('Pedido removido'); renderOrcamento(); });
+}
+function sum2(arr,key){ key=key||'valor'; return arr.reduce((s,p)=>s+(p[key]||0),0); }
+
+const OCUP_BADGE={baixa:['Baixa ocupação','#f97316'],media:['Ocupação média','#eab308'],ok:['OK','#22c55e'],sem_cubagem:['Sem cubagem','#64748b']};
+const ocupBadge=v=>{const s=OCUP_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
+
+async function renderLogistica(){
+  const el=$('#v-logistica');
+  el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
+  let o; try{ o=await getJSON('/api/logistica?'+serverQS()); }
+  catch(e){ el.innerHTML=`<div class="empty">Logística indisponível: ${e.message}</div>`; return; }
+  const r=o.resumo, ps=o.pedidos||[];
+  el.innerHTML=`<h2 class="section"><span>Logística de pedidos — cubagem &amp; ocupação</span></h2>
+    <div class="kpi-grid">
+      ${kpi('Pedidos em aberto',int(r.n_pedidos),moneyK(r.valor_total)+' a entregar',C.accent)}
+      ${kpi('Cubagem total',dec(r.cubagem_total,1)+' m³','cap. '+int(r.capacidade_m3)+' m³/veículo',C.accent2)}
+      ${kpi('Baixa ocupação',int(r.n_baixa),'avaliar consolidação',C.orange)}
+    </div>
+    <div class="count-line">Ocupação estimada = cubagem (Σ qtd em aberto × volume unitário) ÷ capacidade do veículo (${int(r.capacidade_m3)} m³). Baixa ocupação = candidato a consolidação de carga.</div>
+    <div class="panel">
+      ${ps.length?`<div class="tbl-wrap"><table><thead><tr><th>Nº</th><th>Fornecedor</th><th>Comprador</th><th class="num">SKUs</th><th class="num">Caixas</th><th class="num">Cubagem m³</th><th class="num">Ocupação</th><th class="num">Valor</th><th>Previsão</th><th>Status</th></tr></thead>
+      <tbody>${ps.map(p=>`<tr><td class="num">${p.numped}</td><td><span class="prod">${esc(p.fornecedor||'')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.skus)}</td><td class="num">${int(p.caixas)}</td><td class="num">${dec(p.cubagem_m3,2)}</td><td class="num">${p.ocupacao!=null?pct(p.ocupacao):'—'}</td><td class="num">${money(p.valor_aberto)}</td><td>${dt(p.dt_previsao)}</td><td>${ocupBadge(p.status)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+    </div>`;
 }
 
 /* ───────── planos de ação (inline) ───────── */
@@ -616,10 +704,12 @@ async function openProduto(cod){
       <div class="lote-row"><span>Ruptura</span><span>${p.status_ruptura?badge('0-15',p.status_ruptura+'d'):'—'}</span></div>
       <div class="lote-row"><span>Parado</span><span>${p.status_parado?badge(p.status_parado):badge('ok','ok')}</span></div>
       <div class="lote-row"><span>Última saída</span><span>${dt(p.dtultsaida)} ${p.dias_sem_venda!=null?'('+p.dias_sem_venda+'d)':''}</span></div>
-      <div class="d-sec">Reposição (lead ${int(p.lead_efetivo)}d)</div>
-      <div class="lote-row"><span>Ponto de pedido</span><span>${int(p.rop)}</span></div>
+      <div class="d-sec">Abastecimento (lead ${int(p.lead_efetivo)}d)</div>
+      <div class="lote-row"><span>Já pedido (aberto)</span><span>${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida)+' un':'—'}</span></div>
+      <div class="lote-row"><span>Estoque projetado</span><span>${int(p.estoque_projetado)} <small class="muted">(cob. ${cob(p.cobertura_proj)})</small></span></div>
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
-      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCx(p.sugestao_compra,p.qtunitcx)}</b></span></div>
+      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(p.valor_sugerido_liq)}</span></div>
+      <div class="lote-row"><span>Status</span><span>${statExec(p.status_exec)}</span></div>
       ${planoDrawer(p.plano)}
       <div class="d-sec">Lotes / validade</div>
       ${lotes.length?lotes.map(l=>`<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>`).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
@@ -636,11 +726,14 @@ function render(){
   if(!$('#v-'+S.view)) S.view='cockpit';   // view inválida/removida (ex.: 'fila' salva) → cockpit
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+S.view).classList.add('active');
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===S.view));
-  if(S.view==='orcamento'){ renderOrcamento(); return; }
+  const g=GROUP_OF(S.view);
+  document.querySelectorAll('.navgroup').forEach(x=>x.classList.toggle('active',x.dataset.group===g));
+  document.querySelectorAll('.tab').forEach(t=>{ t.style.display=(t.dataset.group===g)?'':'none'; t.classList.toggle('active',t.dataset.view===S.view); });
+  if(S.view==='orcamento'){ renderOrcamento(); savePrefs(); return; }
+  if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   const P=filtered();
-  ({cockpit:renderCockpit,ruptura:renderRuptura,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos}[S.view]||renderCockpit)(P);
+  ({cockpit:renderCockpit,ruptura:renderRuptura,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
@@ -698,6 +791,7 @@ async function init(){
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
+  document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.abast='';S.cli.parado='';S.cli.ruptura=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
   if(pr.view) S.view=pr.view;

@@ -86,8 +86,17 @@ input[type=text].search { width: 100%; min-width: 0; }
 }
 .chip.on { background: rgba(56,189,248,.14); border-color: var(--accent); color: var(--accent); }
 
-/* ───── view tabs ───── */
-.tabs { display: flex; gap: 4px; padding: 12px 22px 0; flex-wrap: wrap; }
+/* ───── nav grupos (nível 1) ───── */
+.navgroups { display: flex; gap: 6px; padding: 12px 22px 0; flex-wrap: wrap; }
+.navgroup {
+  padding: 8px 18px; border-radius: 10px; cursor: pointer; font-weight: 700;
+  font-size: .82rem; color: var(--text-dim); border: 1px solid transparent; transition: all .12s;
+}
+.navgroup:hover { color: var(--text); background: var(--surface); }
+.navgroup.active { color: var(--accent); background: var(--surface); border-color: var(--border); }
+
+/* ───── view tabs (nível 2) ───── */
+.tabs { display: flex; gap: 4px; padding: 6px 22px 0; flex-wrap: wrap; }
 .tab {
   padding: 9px 16px; border-radius: 9px 9px 0 0; cursor: pointer; font-weight: 600;
   font-size: .82rem; color: var(--text-dim); border: 1px solid transparent; border-bottom: none;

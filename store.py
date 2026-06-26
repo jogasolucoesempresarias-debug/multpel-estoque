@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS estoque_planos_acao (
     criado_em     TIMESTAMP DEFAULT now(),
     atualizado_em TIMESTAMP DEFAULT now()
 );
+-- migração: pedido manual vira "ordem gerada na nossa plataforma", pendente de envio ao
+-- Winthor. Quando sincronizado, sai do orçamento (o realizado passa a vir do Winthor real).
+ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT 'NOSSO_SISTEMA';
+ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS sincronizado_winthor BOOLEAN DEFAULT false;
+ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS numped_winthor TEXT;
 """
 
 _disponivel = None  # cache do teste de conexão (True/False)
@@ -131,6 +136,39 @@ def orcamento_resumo(mes, comprador="TODOS"):
     pct = (comprado / meta) if meta > 0 else None
     return {"mes": mes, "comprador": comprador, "meta": meta, "comprado": comprado,
             "saldo": saldo, "pct": pct, "n_pedidos": n}
+
+
+def meta_get(mes, comprador="TODOS"):
+    """Meta manual lançada (override do 65% automático), ou None se não houver."""
+    try:
+        conn = get_db()
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT meta_valor FROM estoque_orcamento WHERE mes=%s AND comprador=%s",
+                        (mes, comprador or "TODOS"))
+            row = cur.fetchone()
+        conn.close()
+        return float(row[0]) if row and row[0] else None
+    except Exception:
+        return None
+
+
+def pedidos_pendentes(mes, comprador=None):
+    """Pedidos manuais (gerados na nossa plataforma) ainda NÃO sincronizados com o Winthor.
+    Ficam à parte do realizado p/ não duplicar quando voltarem da base oficial."""
+    try:
+        conn = get_db()
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            base = ("SELECT * FROM estoque_pedidos WHERE mes=%s "
+                    "AND COALESCE(sincronizado_winthor,false)=false")
+            if comprador and comprador != "TODOS":
+                cur.execute(base + " AND comprador=%s ORDER BY id DESC", (mes, comprador))
+            else:
+                cur.execute(base + " ORDER BY id DESC", (mes,))
+            out = _rows(cur)
+        conn.close()
+        return out
+    except Exception:
+        return []
 
 
 def orcamento_set(mes, comprador, meta_valor):
