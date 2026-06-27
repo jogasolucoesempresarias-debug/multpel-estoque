@@ -380,6 +380,29 @@ def api_validade():
     return jsonify({"ok": True, "horizonte": dias, "resumo": resumo, "lotes": fefo})
 
 
+@app.route("/api/resumos")
+def api_resumos():
+    """Painel gerencial do diretor: 2 blocos-resumo (itens a vencer por faixa de validade +
+    cobertura de estoque por faixa de dias). Validade busca a janela inteira (não só 30d)."""
+    produtos, params, filiais = _build_produtos()
+    idx = {p["codprod"]: p for p in produtos}
+    hoje = _hoje()
+    lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=3650), filiais))
+    # orçamento consolidado (TODOS) — comprado vem do Winthor real
+    cab = _pedidos_data(filiais, hoje)["cab"]
+    venda_comp = _venda_comprador_30d(filiais, hoje)
+    orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
+                                 _mes_atual(), "TODOS", pct=0.65, hoje=hoje, meta_override=None)
+    return jsonify({
+        "ok": True,
+        "gerado_em": hoje.isoformat(),
+        "validade": core.resumo_validade(lotes, idx, hoje=hoje),
+        "cobertura": core.resumo_cobertura(produtos),
+        "orcamento": orc["resumo"],
+        "ruptura": core.resumo_ruptura(produtos),
+    })
+
+
 @app.route("/api/produto/<int:codprod>")
 def api_produto(codprod):
     produtos, params, filiais = _build_produtos()
@@ -638,9 +661,9 @@ def api_orcamento():
     pct = float(request.args.get("pct") or 0.65)
     cab = _pedidos_data(filiais, hoje)["cab"]
     venda_comp = _venda_comprador_30d(filiais, hoje)
-    meta_override = store.meta_get(mes, comprador) if store.ensure() else None
+    # meta sempre automática (65% da venda líquida 30d por comprador) — sem override manual
     res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
-                                 mes, comprador, pct=pct, hoje=hoje, meta_override=meta_override)
+                                 mes, comprador, pct=pct, hoje=hoje, meta_override=None)
     manuais = store.pedidos_pendentes(mes, comprador) if store.disponivel() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "manuais": manuais})

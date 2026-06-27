@@ -38,6 +38,9 @@ const STAT_EXEC={ruptura_sem_pedido:['Ruptura s/ pedido','#ef4444'],ruptura_pedi
 const statExec = v => { const s=STAT_EXEC[v]; return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—'; };
 // sugestão em caixas a partir do campo já calculado no servidor (sugestao_cx) + unidades
 const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` · ${int((p.sugestao_cx||0)*(p.caixa||1))} un`:''}` : '—');
+// embalagem do produto (caixa do PCEMBALAGEM) + fator un/cx — p/ validar a conversão unid→caixa
+const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
+  return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
 const NAV={visao:['cockpit'],comprar:['reposicao','ruptura','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['parado','validade'],analise:['comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
@@ -200,7 +203,8 @@ function renderCockpit(P){
    <div class="row">
      <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
-   </div>`;
+   </div>
+   <div id="ck-resumos" style="margin-top:4px"><div class="count-line">Carregando resumos gerenciais…</div></div>`;
   chart('ch-faixas',{type:'doughnut',data:{labels:k.faixas.map(f=>f.faixa),datasets:[{data:k.faixas.map(f=>f.valor),backgroundColor:k.faixas.map(f=>COR_FAIXA[f.faixa]),borderWidth:0}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>k.faixas[c.dataIndex].faixa+': '+money(c.raw)}}},cutout:'62%'}});
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].valor),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
@@ -209,16 +213,39 @@ function renderCockpit(P){
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
   el.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
   wireAlerts(el);
+  injectResumos('#ck-resumos');
 }
 
 function renderRuptura(P){
   const rup=P.filter(p=>p.status_ruptura).sort((a,b)=>(a.cobertura||0)-(b.cobertura||0));
   const cols=[colCod,colProd,colForn,{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
-    {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'cobertura',label:'Cob.',num:true,fmt:cob},
+    {key:'qtdisp',label:'Disp.',num:true,fmt:int},
+    {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
+    {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     colGiroSpark,{key:'sugestao_compra',label:'Sugerido',num:true,fmt:int},
     {key:'status_ruptura',label:'Faixa',badge:true,map:v=>v+'d'}];
+  let rf=rup;
+  if(S.cli.cobFaixa) rf=rf.filter(p=>p.status_ruptura===S.cli.cobFaixa);
+  if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
+  if(S.cli.cobPed==='sem') rf=rf.filter(p=>(p.qtd_ja_pedida||0)<=0);
   $('#v-ruptura').innerHTML=head('Cobertura crítica — cobertura ≤ 30 dias','ruptura')+
-    `<div class="count-line">Atenção de abastecimento: cobertura (estoque ÷ giro diário) ≤ 30 dias. Ruptura real (estoque ≤ 0) fica na aba <b>Estoque zerado</b>.</div>`+renderTable(rup,cols,'ruptura');
+    `<div class="row" style="gap:14px;margin-bottom:4px">
+       <div class="fb-group"><label>Faixa</label>
+         <select id="cob-faixa" class="fb-control" style="width:auto">
+           <option value="">Todas</option>
+           <option value="0-15" ${S.cli.cobFaixa==='0-15'?'selected':''}>0-15 dias</option>
+           <option value="16-30" ${S.cli.cobFaixa==='16-30'?'selected':''}>16-30 dias</option>
+         </select></div>
+       <div class="fb-group"><label>Pedido em aberto</label>
+         <select id="cob-ped" class="fb-control" style="width:auto">
+           <option value="">Todos</option>
+           <option value="sem" ${S.cli.cobPed==='sem'?'selected':''}>Sem pedido (risco real)</option>
+           <option value="com" ${S.cli.cobPed==='com'?'selected':''}>Já comprado</option>
+         </select></div>
+     </div>
+     <div class="count-line">Atenção de abastecimento: cobertura (estoque ÷ giro diário) ≤ 30 dias. Ruptura real (estoque ≤ 0) fica na aba <b>Estoque zerado</b>. "Sem pedido" isola o risco real.</div>`+renderTable(rf,cols,'ruptura');
+  const fx=$('#cob-faixa'); if(fx) fx.onchange=e=>{S.cli.cobFaixa=e.target.value;render();};
+  const pd=$('#cob-ped'); if(pd) pd.onchange=e=>{S.cli.cobPed=e.target.value;render();};
 }
 
 function renderEstoqueZero(P){
@@ -231,14 +258,22 @@ function renderEstoqueZero(P){
     colGiroSpark,
     {key:'sugestao_cx',label:'Sugerido (cx)',num:true,html:p=>sugCxN(p)},
     {key:'status_exec',label:'Status',html:p=>statExec(p.status_exec)}];
+  const statuses=[...new Set(z.map(p=>p.status_exec))];
+  const zf=S.cli.ezStatus?z.filter(p=>p.status_exec===S.cli.ezStatus):z;
   $('#v-estoque_zero').innerHTML=head('Estoque zerado e negativo')+
     `<div class="kpi-grid">
        ${kpi('Zerados / negativos',int(z.length),int(neg.length)+' negativos',C.red)}
        ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
        ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
      </div>
+     <div class="fb-group" style="margin:0 0 6px"><label>Filtrar status</label>
+       <select id="ez-status" class="fb-control" style="width:auto">
+         <option value="">Todos</option>
+         ${statuses.map(s=>`<option value="${s}" ${S.cli.ezStatus===s?'selected':''}>${STAT_EXEC[s]?STAT_EXEC[s][0]:s}</option>`).join('')}
+       </select></div>
      <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor).</div>`+
-    renderTable(z,cols,'estoque_zero');
+    renderTable(zf,cols,'estoque_zero');
+  const sel=$('#ez-status'); if(sel) sel.onchange=e=>{S.cli.ezStatus=e.target.value;render();};
 }
 
 const QUAL_CHK={
@@ -276,8 +311,8 @@ function renderReposicao(P){
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
@@ -500,7 +535,7 @@ async function renderOrcamento(){
   const cor=prog>=100?C.red:(prog>=85?C.orange:C.green);
   const abertos=o.abertos||[], manuais=o.manuais||[];
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}</span>
-      <span><button class="btn sm" id="btn-meta">Ajustar meta</button> <button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
+      <span><button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
     <div class="kpi-grid">
       ${kpi('Meta do mês',money(r.meta),r.meta_auto?'65% da venda líq. 30d':'meta manual',C.accent)}
       ${kpi('Comprado (Winthor)',money(r.comprado),r.n_pedidos+' pedidos',C.accent2)}
@@ -521,11 +556,53 @@ async function renderOrcamento(){
       <div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Pedido</th><th class="num">Valor</th><th></th></tr></thead>
       <tbody>${manuais.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor).</div></div>`:''}`;
-  $('#btn-meta').onclick=()=>modalMeta(r);
   $('#btn-pedido').onclick=()=>modalPedido(null);
   el.querySelectorAll('[data-delped]').forEach(b=>b.onclick=async()=>{ await postJSON('/api/pedidos/'+b.dataset.delped,{}, 'DELETE'); toast('Pedido removido'); renderOrcamento(); });
 }
 function sum2(arr,key){ key=key||'valor'; return arr.reduce((s,p)=>s+(p[key]||0),0); }
+
+const RESUMO_COR={'URGENTE':'red','ALTO':'orange','ATENCAO':'yellow','BAIXO':'accent','OK':'green','RISCO RUPTURA':'red','CRITICO':'purple'};
+const resumoBadge=s=>{const cor=C[RESUMO_COR[s]||'dim'];return `<span class="badge" style="background:${cor}22;color:${cor}">${s}</span>`;};
+function resumoTabela(titulo,faixas,total,colQt,lblQt){
+  return `<div class="panel grow"><h3>${titulo}</h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status</th></tr></thead>
+    <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
+    <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(total[colQt])}</td><td class="num">${money(total.valor)}</td><td class="num">100%</td><td></td></tr></tbody></table></div></div>`;
+}
+function resumoCard(titulo,rows,cor){
+  return `<div class="panel grow"><h3>${titulo}</h3>
+    <table class="mini">${rows.map(([l,v])=>`<tr><td class="muted">${l}</td><td class="num"><b>${v}</b></td></tr>`).join('')}</table>
+    ${cor?`<div class="bar" style="margin-top:8px"><i style="width:0;background:${cor}"></i></div>`:''}</div>`;
+}
+async function injectResumos(sel){
+  const el=$(sel); if(!el) return;
+  let o; try{ o=await getJSON('/api/resumos?'+serverQS()); }
+  catch(e){ el.innerHTML=`<div class="count-line">Resumos indisponíveis: ${e.message}</div>`; return; }
+  const orc=o.orcamento||{}, rup=o.ruptura||{};
+  const dentro=(orc.saldo||0)>=0;
+  const cardOrc=resumoCard('Orçamento de compras — comprado × meta',[
+    ['Meta de compras (65% venda líq. 30d)',money(orc.meta)],
+    ['Comprado no mês (Winthor)',money(orc.comprado)],
+    ['% da meta',orc.pct_consumido!=null?pct(orc.pct_consumido):'—'],
+    ['Saldo da meta',money(orc.saldo)],
+    ['Status',dentro?'DENTRO DA META':'FORA DA META'],
+    ['Mês competência',orc.mes||'—'],
+  ],dentro?C.green:C.red);
+  const cardRup=resumoCard('Ruptura de produtos',[
+    ['Itens em ruptura',int(rup.itens)],
+    ['Total de produtos',int(rup.total)],
+    ['% ruptura',rup.perc!=null?pct(rup.perc):'—'],
+    ['Valor em ruptura',money(rup.valor)],
+    ['Critério',rup.criterio||'ESTOQUE ≤ 0 E GIRO > 0'],
+  ],C.red);
+  el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos</span></h2>
+    <div class="row">${cardOrc}${cardRup}</div>
+    <div class="row">
+      ${resumoTabela('Itens a vencer por faixa de validade',o.validade.faixas,o.validade.total,'itens','Itens')}
+      ${resumoTabela('Cobertura de estoque por faixa de dias',o.cobertura.faixas,o.cobertura.total,'produtos','Produtos')}
+    </div>
+    <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
+}
 
 const OCUP_BADGE={baixa:['Baixa ocupação','#f97316'],media:['Ocupação média','#eab308'],ok:['OK','#22c55e'],sem_cubagem:['Sem cubagem','#64748b']};
 const ocupBadge=v=>{const s=OCUP_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
@@ -705,6 +782,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Parado</span><span>${p.status_parado?badge(p.status_parado):badge('ok','ok')}</span></div>
       <div class="lote-row"><span>Última saída</span><span>${dt(p.dtultsaida)} ${p.dias_sem_venda!=null?'('+p.dias_sem_venda+'d)':''}</span></div>
       <div class="d-sec">Abastecimento (lead ${int(p.lead_efetivo)}d)</div>
+      <div class="lote-row"><span>Embalagem</span><span>${embCell(p)}</span></div>
       <div class="lote-row"><span>Já pedido (aberto)</span><span>${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida)+' un':'—'}</span></div>
       <div class="lote-row"><span>Estoque projetado</span><span>${int(p.estoque_projetado)} <small class="muted">(cob. ${cob(p.cobertura_proj)})</small></span></div>
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>

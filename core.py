@@ -397,6 +397,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "est_alvo": _round(est_alvo), "sugestao_compra": _round(sugestao),
             "sugestao_bruta": _round(sugestao_bruta), "sugestao_cx": sugestao_cx,
             "caixa": _round(caixa) if caixa else None,
+            "embalagem_caixa": emb.get("embalagem"),
             "qtd_ja_pedida": _round(qtd_ja_pedida),
             "estoque_projetado": _round(estoque_projetado),
             "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
@@ -618,7 +619,7 @@ def por_comprador(produtos):
 
 # ───────────────────────── orçamento de compras (pedido real Winthor) ─────────────────────────
 def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
-                      pct=0.65, hoje=None, meta_override=None):
+                      pct=0.65, hoje=None, meta_override=None, lead_padrao=10):
     """Orçamento de compras a partir do pedido de compra REAL (PCPEDIDO).
     cab: linhas do cabeçalho; venda_comp: {nome_comprador: venda_liq_30d} (p/ a meta);
     comp_map: {matricula:nome}; forn_map: {codfornec: row}; mes: 'YYYY-MM'.
@@ -633,7 +634,7 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         if not todos and nome != comprador:
             continue
         dtem = _parse_dt(r.get("DTEMISSAO"))
-        dtprev = _parse_dt(r.get("DTPREVENT"))   # previsão de entrada no estoque
+        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
         vlt = _n(r.get("VLTOTAL"))
         vle = _n(r.get("VLENTREGUE"))            # valor já entregue (DTENTRADAESTOQUE é vazio aqui)
         aberto_val = max(0.0, vlt - vle)
@@ -645,6 +646,18 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         if no_mes:
             realizado += vlt                     # comprado válido = tudo que foi pedido no mês
             aberto += aberto_val                 # comprometido aberto = ainda não entregue
+        # previsão de entrega (HÍBRIDO): usa a DTPREVENT do Winthor quando é previsão REAL
+        # (posterior à emissão); senão = data do pedido + lead time do fornecedor (PRAZOENTREGA,
+        # ou padrão). Evita marcar como atrasado pedido em que o Winthor só repetiu a emissão.
+        dtprev_raw = _parse_dt(r.get("DTPREVENT"))
+        lead = _n((forn or {}).get("PRAZOENTREGA"))
+        lead = int(lead) if lead > 0 else int(lead_padrao)
+        if dtprev_raw and dtem and dtprev_raw > dtem:
+            dtprev = dtprev_raw
+        elif dtem:
+            dtprev = dtem + timedelta(days=lead)
+        else:
+            dtprev = dtprev_raw
         dias_prev = (dtprev - hoje).days if (dtprev and not recebido) else None
         if recebido:
             status_prazo = "recebido"
@@ -656,7 +669,6 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
             status_prazo = "chega_7"
         else:
             status_prazo = "no_prazo"
-        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
         pedidos.append({
             "numped": int(_n(r.get("NUMPED"))),
             "data_pedido": dtem.isoformat() if dtem else None,
@@ -694,6 +706,98 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         "meta_auto": meta_override is None,
     }
     return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos}
+
+
+# ───────────────────────── resumos gerenciais (painel do diretor) ─────────────────────────
+_FX_VALIDADE = [("0 a 15 dias", 0, 15, "URGENTE"), ("16 a 30 dias", 16, 30, "ALTO"),
+                ("31 a 60 dias", 31, 60, "ATENCAO"), ("61 a 90 dias", 61, 90, "BAIXO"),
+                ("Acima de 90 dias", 91, 10**9, "OK")]
+_FX_COBERTURA = [("0 a 30 dias", 0, 30, "RISCO RUPTURA"), ("31 a 60 dias", 31, 60, "OK"),
+                 ("61 a 90 dias", 61, 90, "ATENCAO"), ("91 a 120 dias", 91, 120, "URGENTE"),
+                 ("Acima de 120 dias", 121, 10**9, "CRITICO")]
+
+
+def resumo_validade(lotes, produtos_idx, hoje=None):
+    """Bloco 'Itens a vencer por faixa de validade' (RELATORIO GERENCIAL do diretor).
+    Consolida os lotes por (CODPROD, DTVAL) e classifica por dias até vencer.
+    valor = qt consolidada × custo do produto. Devolve {faixas:[...], total:{...}}."""
+    hoje = hoje or date.today()
+    agg = {}
+    for r in lotes:
+        cod = int(_n(r.get("CODPROD")))
+        dtval = _parse_dt(r.get("DTVAL"))
+        if not dtval:
+            continue
+        agg[(cod, dtval)] = agg.get((cod, dtval), 0.0) + _n(r.get("qt"))
+    faixas = []
+    tot_itens = 0
+    tot_valor = 0.0
+    buckets = {nome: [0, 0.0] for nome, *_ in _FX_VALIDADE}
+    for (cod, dtval), qt in agg.items():
+        dias = (dtval - hoje).days
+        custo = (produtos_idx.get(cod) or {}).get("custo_unit") or 0
+        for nome, lo, hi, _status in _FX_VALIDADE:
+            if lo <= dias <= hi:
+                buckets[nome][0] += 1
+                buckets[nome][1] += qt * custo
+                break
+    for nome, lo, hi, status in _FX_VALIDADE:
+        n, v = buckets[nome]
+        tot_itens += n
+        tot_valor += v
+        faixas.append({"faixa": nome, "itens": n, "valor": _round(v), "status": status})
+    for f in faixas:
+        f["perc"] = _round(f["itens"] / tot_itens, 4) if tot_itens else 0
+    return {"faixas": faixas,
+            "total": {"itens": tot_itens, "valor": _round(tot_valor)}}
+
+
+def resumo_cobertura(produtos):
+    """Bloco 'Cobertura de estoque por faixa de dias' (RELATORIO GERENCIAL do diretor).
+    Cobertura no critério dele: giro<=0 → 9999; senão ceil(qtdisp/giro_dia); qtdisp<=0 → 0.
+    valor = p['valor'] (já com piso zero). Devolve {faixas:[...], total:{...}}."""
+    buckets = {nome: [0, 0.0] for nome, *_ in _FX_COBERTURA}
+    tot_prod = 0
+    tot_valor = 0.0
+    for p in produtos:
+        giro_dia = p.get("giro_dia") or 0
+        qtdisp = p.get("qtdisp") or 0
+        if giro_dia <= 0:
+            cob = 9999
+        elif qtdisp <= 0:
+            cob = 0
+        else:
+            cob = math.ceil(qtdisp / giro_dia)
+        for nome, lo, hi, _status in _FX_COBERTURA:
+            if lo <= cob <= hi:
+                buckets[nome][0] += 1
+                buckets[nome][1] += (p.get("valor") or 0)
+                break
+    faixas = []
+    for nome, lo, hi, status in _FX_COBERTURA:
+        n, v = buckets[nome]
+        tot_prod += n
+        tot_valor += v
+        faixas.append({"faixa": nome, "produtos": n, "valor": _round(v), "status": status})
+    for f in faixas:
+        f["perc"] = _round(f["produtos"] / tot_prod, 4) if tot_prod else 0
+    return {"faixas": faixas,
+            "total": {"produtos": tot_prod, "valor": _round(tot_valor)}}
+
+
+def resumo_ruptura(produtos):
+    """Bloco 'Ruptura de produtos' (RELATORIO GERENCIAL). Critério oficial do diretor:
+    estoque ≤ 0 e giro mensal > 0. % sobre o universo construído (revenda com posição)."""
+    total = len(produtos)
+    itens = sum(1 for p in produtos if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0)
+    return {
+        "itens": itens,
+        "total": total,
+        "perc": _round(itens / total, 4) if total else 0,
+        "valor": _round(sum(p.get("valor") or 0 for p in produtos
+                            if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0)),
+        "criterio": "ESTOQUE <= 0 E GIRO MENSAL > 0",
+    }
 
 
 # ───────────────────────── logística / cubagem (pedido real) ─────────────────────────
