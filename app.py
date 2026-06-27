@@ -385,21 +385,27 @@ def api_resumos():
     """Painel gerencial do diretor: 2 blocos-resumo (itens a vencer por faixa de validade +
     cobertura de estoque por faixa de dias). Validade busca a janela inteira (não só 30d)."""
     produtos, params, filiais = _build_produtos()
-    idx = {p["codprod"]: p for p in produtos}
     hoje = _hoje()
+    comprador = request.args.get("comprador") or "TODOS"
+    todos = comprador in ("", "TODOS")
+    # respeita o filtro de comprador do topo (painéis recalculam por comprador)
+    prod_f = produtos if todos else [p for p in produtos if (p.get("comprador") or "") == comprador]
+    idx = {p["codprod"]: p for p in prod_f}
     lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=3650), filiais))
-    # orçamento consolidado (TODOS) — comprado vem do Winthor real
+    if not todos:
+        cods = set(idx)
+        lotes = [l for l in lotes if int(core._n(l.get("CODPROD"))) in cods]
     cab = _pedidos_data(filiais, hoje)["cab"]
     venda_comp = _venda_comprador_30d(filiais, hoje)
     orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
-                                 _mes_atual(), "TODOS", pct=0.65, hoje=hoje, meta_override=None)
+                                 _mes_atual(), comprador, pct=0.65, hoje=hoje, meta_override=None)
     return jsonify({
         "ok": True,
         "gerado_em": hoje.isoformat(),
         "validade": core.resumo_validade(lotes, idx, hoje=hoje),
-        "cobertura": core.resumo_cobertura(produtos),
+        "cobertura": core.resumo_cobertura(prod_f),
         "orcamento": orc["resumo"],
-        "ruptura": core.resumo_ruptura(produtos),
+        "ruptura": core.resumo_ruptura(prod_f),
     })
 
 
@@ -450,33 +456,80 @@ _CSV_COLS = {
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
                "valor", "cobertura", "status_parado"],
-    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "cobertura",
-                "giro_mes", "sugestao_compra", "status_ruptura", "estoque_zero"],
+    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida", "cobertura",
+                "giro_mes", "sugestao_compra", "status_ruptura"],
+    "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida",
+                     "giro_mes", "sugestao_cx", "status_exec"],
 }
 
 
+def _aplicar_filtros_cliente(produtos):
+    """Aplica os filtros ativos da UI (mesma lógica do filtered() do front) p/ que os exports
+    respeitem o que está na tela. Lê os params da querystring (enviados pelo exportQS)."""
+    a = request.args
+
+    def g(k):
+        v = a.get(k)
+        return v if v not in (None, "") else None
+
+    out = produtos
+    cc = g("comprador_cod")
+    if cc:
+        out = [p for p in out if str(p.get("codcomprador")) == cc]
+    if g("curva"):
+        out = [p for p in out if p.get("curva_abc") == g("curva")]
+    if g("xyz"):
+        out = [p for p in out if p.get("xyz") == g("xyz")]
+    if g("fornec"):
+        out = [p for p in out if str(p.get("codfornec")) == g("fornec")]
+    if g("depto"):
+        out = [p for p in out if str(p.get("codepto")) == g("depto")]
+    bs = g("busca")
+    if bs:
+        bs = bs.lower()
+        out = [p for p in out if bs in str(p.get("codprod")) or bs in (p.get("descricao") or "").lower()]
+    # filtros específicos de aba
+    if g("ez_status"):
+        out = [p for p in out if p.get("status_exec") == g("ez_status")]
+    if g("cob_faixa"):
+        out = [p for p in out if p.get("status_ruptura") == g("cob_faixa")]
+    cp = g("cob_ped")
+    if cp == "com":
+        out = [p for p in out if (p.get("qtd_ja_pedida") or 0) > 0]
+    elif cp == "sem":
+        out = [p for p in out if (p.get("qtd_ja_pedida") or 0) <= 0]
+    if g("par_classe"):
+        out = [p for p in out if p.get("status_parado") == g("par_classe")]
+    return out
+
+
 def _export_data(view):
-    """Devolve (cols, linhas) para a view, reaproveitado por CSV e XLSX."""
+    """Devolve (cols, linhas) para a view, reaproveitado por CSV e XLSX. Respeita os filtros da UI."""
     if view == "validade":
         produtos, params, filiais = _build_produtos()
         idx = {p["codprod"]: p for p in produtos}
         hoje = _hoje()
+        cods = {p["codprod"] for p in _aplicar_filtros_cliente(produtos)}
         lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=int(params["horizonte_val"])), filiais))
-        linhas = core.validade_fefo(lotes, idx, params, hoje=hoje)
+        linhas = [l for l in core.validade_fefo(lotes, idx, params, hoje=hoje) if l["codprod"] in cods]
         cols = ["codprod", "descricao", "fornecedor", "comprador", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
         produtos, params, _ = _build_produtos()
-        linhas = core.fornecedores(produtos, params)
+        linhas = core.fornecedores(_aplicar_filtros_cliente(produtos), params)
+        fc = request.args.get("forn_classe")
+        if fc:
+            linhas = [r for r in linhas if r.get("classificacao") == fc]
         cols = ["codfornec", "fornecedor", "comprador", "n_produtos", "valor", "giro", "cobertura",
                 "venda", "lucro", "margem", "perc_giro", "perc_estoque", "indice", "classificacao"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()
-        linhas = core.por_comprador(produtos)
+        linhas = core.por_comprador(_aplicar_filtros_cliente(produtos))
         cols = ["codcomprador", "comprador", "n_produtos", "estoque", "venda", "lucro",
                 "margem", "n_ruptura", "valor_parado", "sugestao_valor"]
     else:
         produtos, _, _ = _build_produtos()
+        produtos = _aplicar_filtros_cliente(produtos)
         cols = _CSV_COLS.get(view, _CSV_COLS["produtos"])
         if view == "reposicao":
             linhas = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
@@ -484,6 +537,8 @@ def _export_data(view):
             linhas = [p for p in produtos if p["status_parado"]]
         elif view == "ruptura":
             linhas = [p for p in produtos if p["status_ruptura"]]
+        elif view == "estoque_zero":
+            linhas = [p for p in produtos if (p.get("qtdisp") or 0) <= 0]
         else:
             linhas = produtos
     return cols, linhas
@@ -535,9 +590,12 @@ _PDF_COLS = {
     "parado": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
                ("dtultsaida", "Últ. venda", "date"), ("dias_sem_venda", "Dias s/v", "int"), ("qtdisp", "Disp.", "int"),
                ("valor", "Valor", "money"), ("status_parado", "Classe", "text")],
-    "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
-                ("qtdisp", "Disp.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
+    "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
+                ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
                 ("sugestao_compra", "Sugerido", "int"), ("status_ruptura", "Faixa", "text")],
+    "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+                     ("qtdisp", "Estoque", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
+                     ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
     "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
                  ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
                  ("valor_risco", "Valor risco", "money"), ("classificacao", "Classe", "text")],
@@ -549,8 +607,8 @@ _PDF_COLS = {
                     ("margem", "Margem", "pct")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
-               "parado": "Estoque parado", "ruptura": "Ruptura", "validade": "Validade / FEFO",
-               "fornecedores": "Fornecedores", "compradores": "Compradores"}
+               "parado": "Estoque parado", "ruptura": "Cobertura crítica", "validade": "Validade / FEFO",
+               "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):
