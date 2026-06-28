@@ -268,15 +268,17 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         else:
             status_abast = "ok"
 
-        # ruptura (cobertura <= ruptura_dias), faixas 0-15 / 16-30
+        # cobertura crítica — limiar = cobertura-alvo (parâmetro do diretor), não mais fixo em 30.
+        # faixas 0-15 (urgente) / 16 → cobertura_total.
         estoque_zero = qtdisp <= 0
+        cob_crit = params["cobertura_total"]
         if giro_dia <= 0:
             status_ruptura = None
         else:
             cob_eff = cobertura if (cobertura is not None) else 0.0
             if cob_eff <= 15:
                 status_ruptura = "0-15"
-            elif cob_eff <= params["ruptura_dias"]:
+            elif cob_eff <= cob_crit:
                 status_ruptura = "16-30"
             else:
                 status_ruptura = None
@@ -614,6 +616,38 @@ def por_comprador(produtos):
             "valor_parado": _round(g["valor_parado"]), "sugestao_valor": _round(g["sugestao_valor"]),
         })
     saida.sort(key=lambda x: x["venda"], reverse=True)
+    return saida
+
+
+def ruptura_por_comprador(produtos):
+    """Ruptura agregada por comprador (a mais rica). Ruptura = estoque ≤ 0 e giro > 0.
+    n_sem_pedido = ruptura ainda sem pedido de compra em aberto (risco real);
+    venda_perdida = Σ giro_mes × custo (venda potencial/mês não atendida);
+    custo_reposicao = Σ sugestao_compra × custo (o que custa repor até o alvo)."""
+    grupos = {}
+    for p in produtos:
+        cc = p.get("codcomprador")
+        g = grupos.setdefault(cc if cc is not None else 0, {
+            "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
+            "n_produtos": 0, "n_ruptura": 0, "n_sem_pedido": 0,
+            "venda_perdida": 0.0, "custo_reposicao": 0.0,
+        })
+        g["n_produtos"] += 1
+        if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
+            g["n_ruptura"] += 1
+            if (p.get("qtd_ja_pedida") or 0) <= 0:
+                g["n_sem_pedido"] += 1
+            g["venda_perdida"] += (p.get("giro_mes") or 0) * (p.get("custo_unit") or 0)
+            g["custo_reposicao"] += (p.get("sugestao_compra") or 0) * (p.get("custo_unit") or 0)
+    saida = []
+    for g in grupos.values():
+        saida.append({
+            **g,
+            "pct_ruptura": _round(g["n_ruptura"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
+            "venda_perdida": _round(g["venda_perdida"]),
+            "custo_reposicao": _round(g["custo_reposicao"]),
+        })
+    saida.sort(key=lambda x: x["n_ruptura"], reverse=True)
     return saida
 
 

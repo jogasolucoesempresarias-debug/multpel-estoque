@@ -42,7 +42,7 @@ const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` ·
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit'],comprar:['reposicao','ruptura','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['parado','validade'],analise:['comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
@@ -154,7 +154,7 @@ function renderTable(P,cols,view,onClickRow){
   const note=`<div class="count-line">${int(rows.length)} itens${rows.length>400?' (mostrando 400)':''}</div>`;
   setTimeout(()=>{ const cont=$('#v-'+view);
     cont.querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[view]||{};S.sort[view]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
-    cont.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=e=>{ if(e.target.closest('.rowact'))return; (onClickRow||openProduto)(tr.dataset.cod);});
+    cont.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=e=>{ if(e.target.closest('.rowact'))return; (onClickRow||openProduto)(tr.dataset.cod);});
   },0);
   return note+`<div class="tbl-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
@@ -210,20 +210,20 @@ function renderCockpit(P){
      ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
+   <div id="ck-resumos" style="margin-top:4px"><div class="count-line">Carregando resumos gerenciais…</div></div>
    <div class="row">
-     <div class="panel grow"><h3>Onde está o capital (cobertura)</h3>
+     <div class="panel grow"><h3>Onde está o capital (cobertura de estoque)</h3>
        <div class="row" style="align-items:center"><div style="width:200px"><div class="chart-box sm" style="height:190px"><canvas id="ch-faixas"></canvas></div></div>
        <div class="grow"><table class="mini">${k.faixas.map(f=>`<tr><td><span class="dot" style="background:${COR_FAIXA[f.faixa]}"></span> ${f.faixa}${f.faixa!=='sem giro'?'d':''}</td><td class="num">${int(f.qt)}</td><td class="num">${money(f.valor)}</td></tr>`).join('')}</table></div></div>
      </div>
-     <div class="panel grow"><h3>Curva ABC (valor)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
+     <div class="panel grow"><h3>Curva ABC (valor em estoque)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
        <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${money(k.abc[c].valor)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.valor_total?k.abc[c].valor/k.valor_total*100:0,0)}% do valor</td></tr>`).join('')}</table>
      </div>
    </div>
    <div class="row">
      <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
-   </div>
-   <div id="ck-resumos" style="margin-top:4px"><div class="count-line">Carregando resumos gerenciais…</div></div>`;
+   </div>`;
   chart('ch-faixas',{type:'doughnut',data:{labels:k.faixas.map(f=>f.faixa),datasets:[{data:k.faixas.map(f=>f.valor),backgroundColor:k.faixas.map(f=>COR_FAIXA[f.faixa]),borderWidth:0}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>k.faixas[c.dataIndex].faixa+': '+money(c.raw)}}},cutout:'62%'}});
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].valor),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
@@ -247,17 +247,18 @@ function renderRuptura(P){
   if(S.cli.cobFaixa) rf=rf.filter(p=>p.status_ruptura===S.cli.cobFaixa);
   if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
   if(S.cli.cobPed==='sem') rf=rf.filter(p=>(p.qtd_ja_pedida||0)<=0);
-  const FXc=[{label:'0-15 dias',color:C.red,key:'0-15'},{label:'16-30 dias',color:C.orange,key:'16-30'}];
+  const cobN=S.params.cob||30;
+  const FXc=[{label:'0-15 dias',color:C.red,key:'0-15'},{label:`16-${cobN} dias`,color:C.orange,key:'16-30'}];
   const faixas=FXc.map(f=>{const it=rup.filter(p=>p.status_ruptura===f.key);return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   const el=$('#v-ruptura');
-  el.innerHTML=head('Cobertura crítica — cobertura ≤ 30 dias','ruptura')+
+  el.innerHTML=head(`Cobertura crítica — cobertura ≤ ${cobN} dias`,'ruptura')+
     resumoFaixasBlock('Por faixa de cobertura',faixas,rup,p=>p.valor,S.cli.cobFaixa||'','ch-cob')+
     `<div class="row" style="gap:14px;margin-bottom:4px">
        <div class="fb-group"><label>Faixa</label>
          <select id="cob-faixa" class="fb-control" style="width:auto">
            <option value="">Todas</option>
            <option value="0-15" ${S.cli.cobFaixa==='0-15'?'selected':''}>0-15 dias</option>
-           <option value="16-30" ${S.cli.cobFaixa==='16-30'?'selected':''}>16-30 dias</option>
+           <option value="16-30" ${S.cli.cobFaixa==='16-30'?'selected':''}>16-${cobN} dias</option>
          </select></div>
        <div class="fb-group"><label>Pedido em aberto</label>
          <select id="cob-ped" class="fb-control" style="width:auto">
@@ -551,6 +552,35 @@ function renderFornecedores(P){
      <div class="count-line">Índice = % no giro ÷ % no estoque (&gt;1 = gira mais do que pesa). <b>Ruptura</b> = gira mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
   $('#v-fornecedores').querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['fornecedores']||{};S.sort['fornecedores']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
   const fc=$('#forn-cl'); if(fc) fc.onchange=e=>{S.cli.fornClasse=e.target.value;render();};
+}
+
+function renderRupturaComprador(P){
+  const g={};
+  P.forEach(p=>{const cc=p.codcomprador,chave=cc==null?0:cc;
+    const o=g[chave]=g[chave]||{cod:cc,nome:p.comprador||'Sem comprador',n:0,rupt:0,semped:0,perdida:0,repor:0};
+    o.n++;
+    if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
+      o.perdida+=(p.giro_mes||0)*(p.custo_unit||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
+  const rows0=Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0})).filter(o=>o.rupt>0||o.n>0);
+  const skk='ruptcomp', sk=S.sort[skk]||{key:'rupt',dir:-1};
+  const rows=[...rows0].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
+    if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
+  const ck=[{k:'nome',label:'Comprador'},{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},
+    {k:'pct',label:'% Rupt.',num:1},{k:'semped',label:'Sem pedido',num:1},
+    {k:'perdida',label:'Venda perdida/mês',num:1},{k:'repor',label:'Custo reposição',num:1}];
+  const totR=rows.reduce((s,r)=>s+r.rupt,0),totSem=rows.reduce((s,r)=>s+r.semped,0),
+    totP=rows.reduce((s,r)=>s+r.perdida,0),totC=rows.reduce((s,r)=>s+r.repor,0);
+  $('#v-ruptura_comprador').innerHTML=head('Ruptura por comprador','ruptura_comprador')+
+    `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+       ${kpi('Itens em ruptura',int(totR),int(totSem)+' sem pedido',C.red)}
+       ${kpi('Venda perdida/mês',money(totP),'potencial não atendido',C.orange)}
+       ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
+       ${kpi('Compradores',int(rows.length),'',C.accent2)}
+     </div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). "Venda perdida/mês" = giro mensal × custo. "Custo reposição" = sugestão × custo.</div>
+     <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
+     <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura no filtro 🎉</td></tr>'}</tbody></table></div>`;
+  $('#v-ruptura_comprador').querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skk]||{};S.sort[skk]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
 }
 
 function renderProdutos(P){
@@ -895,7 +925,7 @@ function render(){
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   const P=filtered();
-  ({cockpit:renderCockpit,ruptura:renderRuptura,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
+  ({cockpit:renderCockpit,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
@@ -914,7 +944,7 @@ async function init(){
     $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
     $('#f-comprador').innerHTML='<option value="">Empresa toda</option>'+f.compradores.filter(c=>c.codcomprador>0).map(c=>`<option value="${c.codcomprador}">${esc(c.comprador)}</option>`).join('');
-    if(pr.comprador){ S.cli.comprador=pr.comprador; $('#f-comprador').value=pr.comprador; S.compradorNome=$('#f-comprador').selectedOptions[0]?.textContent||''; }
+    if(pr.comprador){ S.cli.comprador=pr.comprador; $('#f-comprador').value=pr.comprador; S.compradorNome=pr.comprador?($('#f-comprador').selectedOptions[0]?.textContent||''):''; }
   }catch(e){ toast('Falha nos filtros: '+e.message,true); }
   // base toggle visual
   $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',o.dataset.v===S.base));
@@ -928,7 +958,7 @@ async function init(){
   $('#p-arredcx').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.params.arredondacx=+o.dataset.v;$('#p-arredcx').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
 
   // comprador → client filter + define visão inicial
-  $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.selectedOptions[0]?.textContent||''; render(); };
+  $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.value?(e.target.selectedOptions[0]?.textContent||''):''; render(); };
   $('#f-filiais').querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const v=ch.dataset.f;ch.classList.toggle('on');ch.classList.contains('on')?S.filiaisSel.add(v):S.filiaisSel.delete(v); if(!S.filiaisSel.size){ch.classList.add('on');S.filiaisSel.add(v);return;} loadData();});
   $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.base=o.dataset.v;$('#f-base').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));loadData();});
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};

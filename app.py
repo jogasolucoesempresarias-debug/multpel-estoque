@@ -512,7 +512,7 @@ def _export_data(view):
         cods = {p["codprod"] for p in _aplicar_filtros_cliente(produtos)}
         lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=int(params["horizonte_val"])), filiais))
         linhas = [l for l in core.validade_fefo(lotes, idx, params, hoje=hoje) if l["codprod"] in cods]
-        cols = ["codprod", "descricao", "fornecedor", "comprador", "numlote", "dtval",
+        cols = ["codprod", "descricao", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
         produtos, params, _ = _build_produtos()
@@ -527,6 +527,11 @@ def _export_data(view):
         linhas = core.por_comprador(_aplicar_filtros_cliente(produtos))
         cols = ["codcomprador", "comprador", "n_produtos", "estoque", "venda", "lucro",
                 "margem", "n_ruptura", "valor_parado", "sugestao_valor"]
+    elif view == "ruptura_comprador":
+        produtos, _, _ = _build_produtos()
+        linhas = core.ruptura_por_comprador(_aplicar_filtros_cliente(produtos))
+        cols = ["codcomprador", "comprador", "n_produtos", "n_ruptura", "pct_ruptura",
+                "n_sem_pedido", "venda_perdida", "custo_reposicao"]
     else:
         produtos, _, _ = _build_produtos()
         produtos = _aplicar_filtros_cliente(produtos)
@@ -536,7 +541,9 @@ def _export_data(view):
         elif view == "parado":
             linhas = [p for p in produtos if p["status_parado"]]
         elif view == "ruptura":
-            linhas = [p for p in produtos if p["status_ruptura"]]
+            # agrupado por fornecedor no relatório (mesmo fornecedor junto)
+            linhas = sorted((p for p in produtos if p["status_ruptura"]),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(), p.get("codprod") or 0))
         elif view == "estoque_zero":
             linhas = [p for p in produtos if (p.get("qtdisp") or 0) <= 0]
         else:
@@ -596,7 +603,8 @@ _PDF_COLS = {
     "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                      ("qtdisp", "Estoque", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
                      ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
-    "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
+    "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34), ("comprador", "Comprador", "text", 18),
+                 ("fornecedor", "Fornecedor", "text", 22),
                  ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
                  ("valor_risco", "Valor risco", "money"), ("classificacao", "Classe", "text")],
     "fornecedores": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 34), ("n_produtos", "Itens", "int"),
@@ -605,10 +613,15 @@ _PDF_COLS = {
     "compradores": [("codcomprador", "Cód", "text"), ("comprador", "Comprador", "text", 30), ("n_produtos", "Itens", "int"),
                     ("estoque", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
                     ("margem", "Margem", "pct")],
+    "ruptura_comprador": [("comprador", "Comprador", "text", 30), ("n_produtos", "Produtos", "int"),
+                          ("n_ruptura", "Em ruptura", "int"), ("pct_ruptura", "% Rupt.", "num"),
+                          ("n_sem_pedido", "Sem pedido", "int"), ("venda_perdida", "Venda perdida/mês", "money"),
+                          ("custo_reposicao", "Custo reposição", "money")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura crítica", "validade": "Validade / FEFO",
-               "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado"}
+               "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
+               "ruptura_comprador": "Ruptura por comprador"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):
