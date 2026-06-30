@@ -42,7 +42,7 @@ const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` ·
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
@@ -173,6 +173,7 @@ function exportQS(){
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
   if(f.cobFaixa) p.set('cob_faixa',f.cobFaixa);
+  if(f.cobSub) p.set('cob_sub',f.cobSub);
   if(f.cobPed) p.set('cob_ped',f.cobPed);
   if(f.parClasse) p.set('par_classe',f.parClasse);
   if(f.fornClasse) p.set('forn_classe',f.fornClasse);
@@ -205,7 +206,7 @@ function renderCockpit(P){
    <h2 class="section"><span>Alertas de ação</span></h2>
    <div class="alerts">
      ${alertCard(k.ruptura.zerados,'Em ruptura (estoque ≤ 0)',k.ruptura.valor_zerados,C.red,'estoque_zero',{})}
-     ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{ruptura:'1'})}
+     ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{cobFaixa:'0-30'})}
      ${alertCard(k.repor.n,'Comprar (cobertura baixa)',k.repor.valor,C.orange,'reposicao',{})}
      ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
@@ -235,31 +236,51 @@ function renderCockpit(P){
   injectResumos('#ck-resumos');
 }
 
+// faixas de cobertura — métrica OFICIAL da planilha (GRAFICO COBERTURA ESTOQUE), faixas fixas
+const FX_COB=[{key:'0-30',label:'0-30 · risco ruptura',color:C.red},{key:'31-60',label:'31-60 · OK',color:C.green},
+  {key:'61-90',label:'61-90 · atenção',color:C.yellow},{key:'91-120',label:'91-120 · urgente',color:C.orange},
+  {key:'121+',label:'121+ · crítico',color:C.purple}];
+const cobDiasFmt = v => v==null?'—':(v>=9999?'∞':int(v)+'d');
+
 function renderRuptura(P){
-  const rup=P.filter(p=>p.status_ruptura).sort((a,b)=>(a.cobertura||0)-(b.cobertura||0));
+  // distribuição da cobertura sobre a base inteira (igual à planilha), com valor por faixa
+  const faixas=FX_COB.map(f=>{const it=P.filter(p=>p.cobertura_faixa===f.key);
+    return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   const cols=[colCod,colProd,colForn,{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},
+    {key:'valor',label:'Valor estoque',num:true,fmt:money},
+    {key:'cobertura_dias',label:'Cob.',num:true,fmt:cobDiasFmt},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
-    {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     colGiroSpark,{key:'sugestao_compra',label:'Sugerido',num:true,fmt:int},
-    {key:'status_ruptura',label:'Faixa',badge:true,map:v=>v+'d'}];
-  let rf=rup;
-  if(S.cli.cobFaixa) rf=rf.filter(p=>p.status_ruptura===S.cli.cobFaixa);
+    {key:'cobertura_faixa',label:'Faixa',badge:true}];
+  // no 121+ mostra a natureza (sem giro × excesso real) — separa estoque morto de excesso de compra
+  const is121=S.cli.cobFaixa==='121+';
+  if(is121) cols.push({key:'_tipo',label:'Tipo',html:p=>p.sem_giro
+    ?'<span class="badge" style="background:#64748b22;color:#94a3b8">sem giro</span>'
+    :'<span class="badge" style="background:#c084fc22;color:#c084fc">excesso</span>'});
+  let rf=P;
+  if(S.cli.cobFaixa) rf=rf.filter(p=>p.cobertura_faixa===S.cli.cobFaixa);
+  if(is121&&S.cli.cobSub==='semgiro') rf=rf.filter(p=>p.sem_giro);
+  if(is121&&S.cli.cobSub==='excesso') rf=rf.filter(p=>p.excesso_real);
   if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
   if(S.cli.cobPed==='sem') rf=rf.filter(p=>(p.qtd_ja_pedida||0)<=0);
-  const cobN=S.params.cob||30;
-  const FXc=[{label:'0-15 dias',color:C.red,key:'0-15'},{label:`16-${cobN} dias`,color:C.orange,key:'16-30'}];
-  const faixas=FXc.map(f=>{const it=rup.filter(p=>p.status_ruptura===f.key);return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
+  rf=[...rf].sort((a,b)=>(b.valor||0)-(a.valor||0));  // maior estoque primeiro (P1)
+  const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
-  el.innerHTML=head(`Cobertura crítica — cobertura ≤ ${cobN} dias`,'ruptura')+
-    resumoFaixasBlock('Por faixa de cobertura',faixas,rup,p=>p.valor,S.cli.cobFaixa||'','ch-cob')+
+  el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
+    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)',faixas,P,p=>p.valor,S.cli.cobFaixa||'','ch-cob')+
     `<div class="row" style="gap:14px;margin-bottom:4px">
        <div class="fb-group"><label>Faixa</label>
          <select id="cob-faixa" class="fb-control" style="width:auto">
            <option value="">Todas</option>
-           <option value="0-15" ${S.cli.cobFaixa==='0-15'?'selected':''}>0-15 dias</option>
-           <option value="16-30" ${S.cli.cobFaixa==='16-30'?'selected':''}>16-${cobN} dias</option>
+           ${FX_COB.map(f=>`<option value="${f.key}" ${S.cli.cobFaixa===f.key?'selected':''}>${f.label}</option>`).join('')}
          </select></div>
+       ${is121?`<div class="fb-group"><label>121+ · natureza</label>
+         <select id="cob-sub" class="fb-control" style="width:auto">
+           <option value="">Tudo (${int(semG.length+exc.length)})</option>
+           <option value="semgiro" ${S.cli.cobSub==='semgiro'?'selected':''}>Sem giro (${int(semG.length)})</option>
+           <option value="excesso" ${S.cli.cobSub==='excesso'?'selected':''}>Excesso real (${int(exc.length)})</option>
+         </select></div>`:''}
        <div class="fb-group"><label>Pedido em aberto</label>
          <select id="cob-ped" class="fb-control" style="width:auto">
            <option value="">Todos</option>
@@ -267,17 +288,21 @@ function renderRuptura(P){
            <option value="com" ${S.cli.cobPed==='com'?'selected':''}>Já comprado</option>
          </select></div>
      </div>
-     <div class="count-line">Atenção de abastecimento: cobertura (estoque ÷ giro diário) ≤ 30 dias. Ruptura real (estoque ≤ 0) fica na aba <b>Estoque zerado</b>. "Sem pedido" isola o risco real.</div>`+renderTable(rf,cols,'ruptura');
-  drawFaixaChart('ch-cob',faixas);
-  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const k=d.dataset.fkey;S.cli.cobFaixa=(S.cli.cobFaixa===k)?'':k;render();});
+     <div class="count-line">Cobertura = <b>ARREDONDA.CIMA(estoque ÷ giro diário)</b>; giro 0 → não calculável (cai em 121+). Métrica oficial da planilha. Ordene por <b>Valor estoque</b> p/ atacar maior capital. No <b>121+</b>, "sem giro" é estoque morto (liquidar) e "excesso real" é cobertura alta (reduzir compra).</div>`+renderTable(rf,cols,'ruptura');
+  drawFaixaChart('ch-cob',faixas,f=>{S.cli.cobFaixa=(S.cli.cobFaixa===f.key)?'':f.key;S.cli.cobSub='';render();});
+  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const k=d.dataset.fkey;S.cli.cobFaixa=(S.cli.cobFaixa===k)?'':k;S.cli.cobSub='';render();});
   wirePorComprador(el);
-  const fx=$('#cob-faixa'); if(fx) fx.onchange=e=>{S.cli.cobFaixa=e.target.value;render();};
+  const fx=$('#cob-faixa'); if(fx) fx.onchange=e=>{S.cli.cobFaixa=e.target.value;S.cli.cobSub='';render();};
+  const sb=$('#cob-sub'); if(sb) sb.onchange=e=>{S.cli.cobSub=e.target.value;render();};
   const pd=$('#cob-ped'); if(pd) pd.onchange=e=>{S.cli.cobPed=e.target.value;render();};
 }
 
 function renderEstoqueZero(P){
   const z=P.filter(p=>(p.qtdisp||0)<=0);
   const neg=z.filter(p=>(p.qtdisp||0)<0), comGiro=z.filter(p=>(p.giro_dia||0)>0), comPed=z.filter(p=>(p.qtd_ja_pedida||0)>0);
+  // impacto financeiro da ruptura (a custo): volume parado/mês + custo de repor até o alvo
+  const vendaPerdida=comGiro.reduce((s,p)=>s+(p.giro_mes||0)*(p.custo_unit||0),0);
+  const custoRepor=comGiro.reduce((s,p)=>s+(p.sugestao_compra||0)*(p.custo_unit||0),0);
   const cols=[colCod,colProd,colForn,
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Estoque',num:true,fmt:int},
@@ -288,10 +313,12 @@ function renderEstoqueZero(P){
   const statuses=[...new Set(z.map(p=>p.status_exec))];
   const zf=S.cli.ezStatus?z.filter(p=>p.status_exec===S.cli.ezStatus):z;
   $('#v-estoque_zero').innerHTML=head('Estoque zerado e negativo','estoque_zero')+
-    `<div class="kpi-grid">
+    `<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
        ${kpi('Zerados / negativos',int(z.length),int(neg.length)+' negativos',C.red)}
        ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
        ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
+       ${kpi('Venda perdida/mês',money(vendaPerdida),'volume parado · a custo',C.purple)}
+       ${kpi('Custo de reposição',money(custoRepor),'repor até o alvo',C.accent2)}
      </div>
      <div class="fb-group" style="margin:0 0 6px"><label>Filtrar status</label>
        <select id="ez-status" class="fb-control" style="width:auto">
@@ -483,9 +510,12 @@ function resumoFaixasBlock(titulo,faixas,items,valorFn,active,chartId){
         <div class="grow">${porCompradorHTML(items,valorFn)}</div>
       </div></div>`;
 }
-function drawFaixaChart(id,faixas){
+function drawFaixaChart(id,faixas,onPick){
   chart(id,{type:'bar',data:{labels:faixas.map(f=>f.label),datasets:[{data:faixas.map(f=>f.valor),backgroundColor:faixas.map(f=>f.color),borderRadius:6}]},
-    options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+faixas[c.dataIndex].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+    options:{
+      onClick:(ev,els)=>{ if(onPick&&els&&els.length) onPick(faixas[els[0].index]); },
+      onHover:(ev,els)=>{ if(ev.native) ev.native.target.style.cursor=(onPick&&els.length)?'pointer':'default'; },
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+faixas[c.dataIndex].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
 }
 
 function renderParado(P){
@@ -493,20 +523,27 @@ function renderParado(P){
   const FX=[{label:'Atenção 60-90',color:C.yellow,key:'atencao'},{label:'Crítico 90-120',color:C.orange,key:'critico'},{label:'Muito crítico 120+',color:C.red,key:'muito_critico'}];
   const faixas=FX.map(f=>{const it=allPar.filter(p=>p.status_parado===f.key);return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   const active=S.cli.parClasse||'';
-  const cols=[colCod,colProd,colForn,{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
-    {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'sem saída':int(v)},
-    {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'valor',label:'Valor',num:true,fmt:money},
-    {key:'status_saida',label:'Saída',badge:true},{key:'status_parado',label:'Classe',badge:true},
-    {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
-  const par=(active?allPar.filter(p=>p.status_parado===active):allPar).sort((a,b)=>b.valor-a.valor);
+  const par=(active?allPar.filter(p=>p.status_parado===active):allPar);
+  // agrupa por fornecedor (mesmo fornecedor junto, ordenado por maior valor parado)
+  const g={}; par.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor||0);});
+  const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
+  grupos.forEach(gr=>gr.itens.sort((a,b)=>(b.valor||0)-(a.valor||0)));
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
     +resumoFaixasBlock('Por faixa (dias sem venda)',faixas,allPar,p=>p.valor,active,'ch-parado')
     +(active?`<div class="count-line">Filtrando <b>${FX.find(f=>f.key===active)?.label||active}</b> · <a href="#" id="par-clear">limpar</a></div>`:'')
-    +renderTable(par,cols,'parado');
-  drawFaixaChart('ch-parado',faixas);
+    +`<div class="count-line">Agrupado por fornecedor (maior valor parado primeiro). Faixas fixas: atenção 60-90 · crítico 90-120 · muito crítico 120+ dias.</div>`
+    +grupos.map(gr=>`
+      <div class="panel forn-grp">
+        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span><span>${money(gr.valor)}</span></h3>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Última venda</th><th class="num">Dias s/v</th><th class="num">Disp.</th><th class="num">Valor</th><th>Saída</th><th>Classe</th><th>Ação</th></tr></thead>
+        <tbody>${gr.itens.map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td><td>${dt(p.dtultsaida)}</td><td class="num">${p.dias_sem_venda==null?'sem saída':int(p.dias_sem_venda)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${money(p.valor)}</td><td>${badge(p.status_saida)}</td><td>${badge(p.status_parado)}</td><td>${planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}</td></tr>`).join('')}</tbody></table></div>
+      </div>`).join('')
+    +(grupos.length?'':'<div class="empty">Nenhum item parado no filtro 🎉</div>');
+  drawFaixaChart('ch-parado',faixas,f=>{S.cli.parClasse=(active===f.key)?'':f.key;render();});
   el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const k=d.dataset.fkey;S.cli.parClasse=(active===k)?'':k;render();});
   const pc=$('#par-clear'); if(pc)pc.onclick=e=>{e.preventDefault();S.cli.parClasse='';render();};
+  el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact')&&!e.target.closest('.plano-set'))openProduto(tr.dataset.cod);});
   wirePorComprador(el);
   wirePlanoCells();
 }
@@ -591,6 +628,39 @@ function renderProdutos(P){
   $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+renderTable(P,cols,'produtos');
 }
 
+const STAT_LUCRO={alta:['Alta entrega',C.green],boa:['Boa entrega',C.accent],baixa:['Entrega baixa',C.dim],negativo:['Lucro negativo',C.red]};
+async function renderDesempenho(){
+  const el=$('#v-desempenho');
+  el.innerHTML=`<div class="loader"><div class="spinner"></div>Carregando desempenho comercial…</div>`;
+  let j; try{ j=await getJSON('/api/desempenho?venda_periodo='+encodeURIComponent(S.vperiodo)); }
+  catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar desempenho: ${esc(e.message)}</div>`; return; }
+  const r=j.resumo||{}; let rows=j.compradores||[];
+  // filtro de comprador do topo
+  if(S.cli.comprador) rows=rows.filter(p=>String(p.codcomprador)===S.cli.comprador);
+  const perLbl=({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período';
+  const ck=[{k:'ranking',label:'#',num:1},{k:'comprador',label:'Comprador'},{k:'fornecedores',label:'Fornec.',num:1},
+    {k:'clientes_pos',label:'Positivação',num:1},{k:'venda_liquida',label:'Venda líq.',num:1},{k:'lucro_bruto',label:'Lucro bruto',num:1},
+    {k:'margem',label:'Margem',num:1},{k:'devolucao',label:'Devolução',num:1},{k:'part_lucro',label:'% Lucro',num:1},
+    {k:'yoy',label:'Ano×Ano',num:1},{k:'status_lucro',label:'Status'}];
+  const sk=S.sort['desempenho']||{key:'lucro_bruto',dir:-1};
+  rows=[...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
+    if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
+  const yoyCell=v=>v==null?'<span class="muted">—</span>':`<span style="color:${v>=0?C.green:C.red}">${v>=0?'+':''}${dec(v,1)}%</span>`;
+  const statCell=v=>{const s=STAT_LUCRO[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
+  el.innerHTML=`<h2 class="section"><span>Desempenho comercial por comprador</span>${exportBtns('desempenho')}</h2>
+    <div class="count-line">Receita/lucro/positivação dos últimos <b>${perLbl}</b> (venda líquida = bruta − devoluções) · ano×ano = vs. mesmo período do ano anterior. Espelha a aba RECEITA COMPRADOR da planilha.</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
+      ${kpi('Venda líquida',money(r.venda_liquida),'',C.green)}
+      ${kpi('Lucro bruto',money(r.lucro_bruto),'',C.accent2)}
+      ${kpi('Margem',r.margem!=null?dec(r.margem,1)+'%':'—','',C.purple)}
+      ${kpi('Positivação',int(r.clientes_pos),'clientes distintos',C.accent)}
+      ${kpi('Devolução',money(r.devolucao),'',C.red)}</div>
+    <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(p=>`<tr><td class="num">${int(p.ranking)}</td><td><span class="prod">${esc(p.comprador)}</span></td><td class="num">${int(p.fornecedores)}</td><td class="num">${int(p.clientes_pos)}</td><td class="num">${money(p.venda_liquida)}</td><td class="num">${money(p.lucro_bruto)}</td><td class="num">${p.margem==null?'—':dec(p.margem,1)+'%'}</td><td class="num">${money(p.devolucao)}</td><td class="num">${dec(p.part_lucro||0,1)}%</td><td class="num">${yoyCell(p.yoy)}</td><td>${statCell(p.status_lucro)}</td></tr>`).join('')||'<tr><td colspan="11" class="muted">Sem dados de venda no período.</td></tr>'}</tbody></table></div>
+    <div class="count-line">${rows.length} compradores · positivação = clientes distintos atendidos no período (DISTINCTCOUNT cliente).</div>`;
+  el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['desempenho']||{};S.sort['desempenho']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
+}
+
 function renderComprasVendas(P){
   const dim=S.cvDim, el=$('#v-comprasvendas');
   const seg=`<div class="seg" id="cv-seg">
@@ -611,7 +681,8 @@ function renderComprasVendas(P){
       const nome=dim==='fornecedor'?(p.fornecedor||'Forn '+key):(p.comprador||'Sem comprador');
       const o=g[key]=g[key]||{key,nome,n:0,estoque:0,venda:0,lucro:0,giro:0,rupt:0,parado:0};
       o.n++; o.estoque+=(p.valor||0); o.venda+=(p.venda||0); o.lucro+=(p.lucro||0); o.giro+=(p.giro_mes||0);
-      if(p.status_ruptura)o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
+      // ruptura = critério oficial (estoque<=0 & giro>0); cobertura baixa é atenção, não ruptura
+      if((p.qtdisp<=0)&&(p.giro_dia>0))o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
     const rows0=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null,pct_rupt:o.n?o.rupt/o.n*100:0}));
     const ck=[{k:'nome',label:dim==='fornecedor'?'Fornecedor':'Comprador'},{k:'n',label:'Itens',num:1},
       {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
@@ -914,26 +985,35 @@ function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
 function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').classList.remove('on'); }
 
 /* ───────── dispatch ───────── */
+// mostra só os tabs do grupo ativo (chamado cedo no boot p/ não piscar todos os tabs no load)
+function applyNav(){
+  if(!$('#v-'+S.view)) S.view='cockpit';
+  const g=GROUP_OF(S.view);
+  document.querySelectorAll('.navgroup').forEach(x=>x.classList.toggle('active',x.dataset.group===g));
+  document.querySelectorAll('.tab').forEach(t=>{ t.style.display=(t.dataset.group===g)?'':'none'; t.classList.toggle('active',t.dataset.view===S.view); });
+}
 function render(){
   if(!$('#v-'+S.view)) S.view='cockpit';   // view inválida/removida (ex.: 'fila' salva) → cockpit
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+S.view).classList.add('active');
-  const g=GROUP_OF(S.view);
-  document.querySelectorAll('.navgroup').forEach(x=>x.classList.toggle('active',x.dataset.group===g));
-  document.querySelectorAll('.tab').forEach(t=>{ t.style.display=(t.dataset.group===g)?'':'none'; t.classList.toggle('active',t.dataset.view===S.view); });
+  applyNav();
   if(S.view==='orcamento'){ renderOrcamento(); savePrefs(); return; }
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
+  if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
   const P=filtered();
   ({cockpit:renderCockpit,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
   const pr=loadPrefs();
   if(pr.base) S.base=pr.base; if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};
+  if(pr.view) S.view=pr.view;
+  applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
+  document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
   try{
     const f=await getJSON('/api/filtros');
     S.filiaisAll=f.filiais;
@@ -982,11 +1062,10 @@ async function init(){
     render();
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
-  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';render();});
-  document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.abast='';S.cli.parado='';S.cli.ruptura=''; render(); }});
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.abast='';S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa='';S.cli.cobSub='';render();});
+  document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.abast='';S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa='';S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
-  if(pr.view) S.view=pr.view;
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
   loadData();
 }

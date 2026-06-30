@@ -262,6 +262,38 @@ def _vendas_mensal_map(meses, hoje, profundo=False):
     return m
 
 
+def _desempenho_data(periodo, hoje):
+    """{resumo, compradores} — desempenho comercial por comprador (RCA). Espelha RECEITA
+    COMPRADOR + comparativo ano×ano. Degrada p/ vazio se RCA indisponível. Cache 30min."""
+    ini, fim = _venda_datas(periodo, hoje)
+    key = f"desemp:{periodo}:{ini}:{fim}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    res = {"resumo": {}, "compradores": []}
+    try:
+        receita = pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim))
+        devol = {}
+        for r in pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim)):
+            cc = r.get("CODCOMPRADOR")
+            if cc not in (None, ""):
+                devol[int(core._n(cc))] = core._n(r.get("dev"))
+        # mesmo período no ano anterior (comparativo YoY por comprador)
+        ini_ant = ini.replace(year=ini.year - 1)
+        fim_ant = fim.replace(year=fim.year - 1)
+        venda_ant = {}
+        for r in pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant)):
+            cc = r.get("CODCOMPRADOR")
+            if cc not in (None, ""):
+                venda_ant[int(core._n(cc))] = core._n(r.get("venda"))
+        res = core.desempenho_comprador(receita, devol, _compradores_map(), venda_ant)
+    except Exception as e:
+        print(f"[desempenho] RCA indisponível ({e}). Aba de desempenho desabilitada.")
+        res = {"resumo": {}, "compradores": []}
+    pbi._CACHE.set(key, res, 1800)
+    return res
+
+
 def _venda_comprador_30d(filiais, hoje):
     """{nome_comprador: venda_liquida_30d} — base da meta de orçamento (65%). Usa caches."""
     key = f"vcomp30:{_filiais_key(filiais)}:{hoje.isoformat()}"
@@ -361,6 +393,16 @@ def api_snapshot():
     })
 
 
+@app.route("/api/desempenho")
+def api_desempenho():
+    """Desempenho comercial por comprador: venda líquida, lucro, margem ponderada, positivação
+    (clientes distintos), devolução e comparativo ano×ano. Período via ?venda_periodo=."""
+    periodo = request.args.get("venda_periodo", "mes")
+    d = _desempenho_data(periodo, _hoje())
+    return jsonify({"ok": True, "periodo": periodo,
+                    "resumo": d["resumo"], "compradores": d["compradores"]})
+
+
 @app.route("/api/validade")
 def api_validade():
     produtos, params, filiais = _build_produtos()
@@ -456,8 +498,8 @@ _CSV_COLS = {
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
                "valor", "cobertura", "status_parado"],
-    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida", "cobertura",
-                "giro_mes", "sugestao_compra", "status_ruptura"],
+    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
+                "cobertura_faixa", "qtd_ja_pedida", "giro_mes", "sugestao_compra"],
     "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida",
                      "giro_mes", "sugestao_cx", "status_exec"],
 }
@@ -492,7 +534,11 @@ def _aplicar_filtros_cliente(produtos):
     if g("ez_status"):
         out = [p for p in out if p.get("status_exec") == g("ez_status")]
     if g("cob_faixa"):
-        out = [p for p in out if p.get("status_ruptura") == g("cob_faixa")]
+        out = [p for p in out if p.get("cobertura_faixa") == g("cob_faixa")]
+    if g("cob_sub") == "semgiro":
+        out = [p for p in out if p.get("sem_giro")]
+    elif g("cob_sub") == "excesso":
+        out = [p for p in out if p.get("excesso_real")]
     cp = g("cob_ped")
     if cp == "com":
         out = [p for p in out if (p.get("qtd_ja_pedida") or 0) > 0]
@@ -532,6 +578,11 @@ def _export_data(view):
         linhas = core.ruptura_por_comprador(_aplicar_filtros_cliente(produtos))
         cols = ["codcomprador", "comprador", "n_produtos", "n_ruptura", "pct_ruptura",
                 "n_sem_pedido", "venda_perdida", "custo_reposicao"]
+    elif view == "desempenho":
+        linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje())["compradores"]
+        cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
+                "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
+                "venda_ano_ant", "yoy", "status_lucro"]
     else:
         produtos, _, _ = _build_produtos()
         produtos = _aplicar_filtros_cliente(produtos)
@@ -539,11 +590,12 @@ def _export_data(view):
         if view == "reposicao":
             linhas = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
         elif view == "parado":
-            linhas = [p for p in produtos if p["status_parado"]]
-        elif view == "ruptura":
             # agrupado por fornecedor no relatório (mesmo fornecedor junto)
-            linhas = sorted((p for p in produtos if p["status_ruptura"]),
+            linhas = sorted((p for p in produtos if p["status_parado"]),
                             key=lambda p: ((p.get("fornecedor") or "").upper(), p.get("codprod") or 0))
+        elif view == "ruptura":
+            # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º
+            linhas = sorted(produtos, key=lambda p: -(p.get("valor") or 0))
         elif view == "estoque_zero":
             linhas = [p for p in produtos if (p.get("qtdisp") or 0) <= 0]
         else:
@@ -597,9 +649,10 @@ _PDF_COLS = {
     "parado": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
                ("dtultsaida", "Últ. venda", "date"), ("dias_sem_venda", "Dias s/v", "int"), ("qtdisp", "Disp.", "int"),
                ("valor", "Valor", "money"), ("status_parado", "Classe", "text")],
-    "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
-                ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
-                ("sugestao_compra", "Sugerido", "int"), ("status_ruptura", "Faixa", "text")],
+    "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
+                ("qtdisp", "Disp.", "int"), ("valor", "Valor", "money"), ("cobertura_dias", "Cob.(d)", "int"),
+                ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
+                ("sugestao_compra", "Sugerido", "int")],
     "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                      ("qtdisp", "Estoque", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
                      ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
@@ -617,11 +670,16 @@ _PDF_COLS = {
                           ("n_ruptura", "Em ruptura", "int"), ("pct_ruptura", "% Rupt.", "num"),
                           ("n_sem_pedido", "Sem pedido", "int"), ("venda_perdida", "Venda perdida/mês", "money"),
                           ("custo_reposicao", "Custo reposição", "money")],
+    "desempenho": [("ranking", "#", "int"), ("comprador", "Comprador", "text", 28),
+                   ("clientes_pos", "Positivação", "int"), ("venda_liquida", "Venda líq.", "money"),
+                   ("lucro_bruto", "Lucro bruto", "money"), ("margem", "Margem", "pct"),
+                   ("devolucao", "Devolução", "money"), ("part_lucro", "% Lucro", "num"),
+                   ("yoy", "Ano×Ano", "pct")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura crítica", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
-               "ruptura_comprador": "Ruptura por comprador"}
+               "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):

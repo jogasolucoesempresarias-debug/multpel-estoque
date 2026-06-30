@@ -28,10 +28,6 @@
 
 <div class="filterbar">
   <div class="fb-group">
-    <label>Filiais</label>
-    <div class="chips" id="f-filiais"></div>
-  </div>
-  <div class="fb-group">
     <label>Estoque</label>
     <div class="seg" id="f-base">
       <span class="seg-opt on" data-v="endereco">Endereçado</span>
@@ -56,6 +52,9 @@
 </div>
 
 <div class="panel" id="params-panel" style="display:none; margin:12px 22px 0;">
+  <div class="row" style="margin-bottom:8px;border-bottom:1px solid var(--line,#1e293b);padding-bottom:10px">
+    <div class="fb-group"><label>Filiais</label><div class="chips" id="f-filiais"></div></div>
+  </div>
   <div class="row">
     <div class="fb-group"><label>Lead time (dias)</label><input type="number" id="p-lead" value="10" style="width:80px"></div>
     <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>
@@ -101,6 +100,7 @@
   <div class="tab" data-view="parado" data-group="estoque">Parado</div>
   <div class="tab" data-view="validade" data-group="estoque">Validade</div>
   <div class="tab" data-view="ruptura_comprador" data-group="estoque">Ruptura</div>
+  <div class="tab" data-view="desempenho" data-group="analise">Desempenho comercial</div>
   <div class="tab" data-view="comprasvendas" data-group="analise">Compras × Vendas</div>
   <div class="tab" data-view="fornecedores" data-group="analise">Fornecedores</div>
   <div class="tab" data-view="abcxyz" data-group="analise">ABC-XYZ</div>
@@ -121,6 +121,7 @@
     <section class="view" id="v-ruptura_comprador"></section>
     <section class="view" id="v-orcamento"></section>
     <section class="view" id="v-logistica"></section>
+    <section class="view" id="v-desempenho"></section>
     <section class="view" id="v-comprasvendas"></section>
     <section class="view" id="v-abcxyz"></section>
     <section class="view" id="v-fornecedores"></section>

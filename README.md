@@ -10,13 +10,17 @@ Foco no **comprador**: ruptura, reposição, validade/FEFO, cobertura/giro, orç
 ## Stack
 Flask + Waitress · HTML/JS + Chart.js · Power BI executeQueries (datasets **Estoque** + **RCA**) · Postgres (orçamento/planos de ação).
 
-## Dados / metodologia (resumo)
-- **Giro** = média dos 3 últimos meses (`QTVENDMES1..3`/3) — bate exato com a planilha do diretor.
-- **Estoque (QTDISP)** = endereçado WMS (`PCESTENDERECO`, RUA≠99, filiais 3+5); toggle p/ gerencial (`QTESTGER`).
-- **Custo** = `CUSTOFIN`. **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME` (dataset RCA).
+## Dados / metodologia (resumo) — v3
+Consome **4 tabelas novas do Winthor** no dataset Estoque: **PCPEDIDO/PCITEM** (pedido de compra real),
+**PCEMBALAGEM** (caixa/cubagem) e **PCEMPR** (comprador no próprio dataset).
+- **Estoque (QTDISP)** = **gerencial** (`QTESTGER` cru, filiais 3+5) para tudo; **endereçado** (`PCESTENDERECO`, RUA≠99) **só na validade/FEFO** (estoque por lote).
+- **Giro** = média dos 3 últimos meses (`QTVENDMES1..3`/3); toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`.
+- **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME` (no próprio dataset Estoque; RCA só p/ venda).
+- **Sugestão de compra** desconta o **pedido de compra REAL em aberto** (PCPEDIDO/PCITEM, qtd pedida − entregue, últimos 180 dias) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); prioriza sobre o estoque projetado (disponível + já pedido).
+- **Orçamento** = meta `65% da venda líquida 30d` por comprador (RCA) × realizado lido **direto do Winthor**; acompanhamento de pedidos por previsão de entrega (híbrido `DTPREVENT`/emissão+lead); logística por cubagem.
 - **Venda/lucro/margem** = `FATURAMENTO_VENDAS` (RCA), líquida (− devoluções), por período.
-- **Sugestão de compra** desconta **trânsito + pendente** (não duplica o que já foi pedido).
-- Detalhes em `docs/estoque.md` e `docs/analise_cobertura.md`.
+- **Navegação** em 2 níveis: Visão · Comprar · Pedidos · Estoque · Análise.
+- Metodologia v3 completa (fórmulas decodificadas da planilha) em **`docs/planilha_v3.md`**.
 
 ---
 
@@ -100,4 +104,5 @@ Não precisa reiniciar o app depois de arrumar o banco: ele reconecta sozinho na
 - 🔒 **Sempre** com `ESTOQUE_SENHA` em produção (URL pública expõe estoque + vendas).
 - 🔑 Segredos (`.env`, secrets do Portainer) **não** vão pro git (`.gitignore`/`.dockerignore` já cobrem `.env`, `*.xlsx`, etc.).
 - 🗄️ Postgres **dedicado** da stack — não toca no `multpel_db`. Quando o estoque for adquirido: apontar `DB_*` para o `postgres_postgres` compartilhado e **unificar o login** com o Multpel (mesmo usuário/senha).
-- 🧮 A **sugestão de compra** considera trânsito/pendente → alguns números de "quanto comprar" ficam menores que a planilha do diretor (é melhoria, não divergência).
+- 🧮 A **sugestão de compra** desconta o **pedido de compra REAL em aberto** (Winthor) → alguns números de "quanto comprar" ficam menores (é melhoria, não divergência).
+- 🕐 O container roda em **`TZ=America/Sao_Paulo`** (fixo no `docker-compose.prod.yml`) — importante p/ `date.today()`, a janela de 180 dias do pedido, o "mês" do orçamento e as previsões de entrega.

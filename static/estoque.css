@@ -97,6 +97,9 @@ input[type=text].search { width: 100%; min-width: 0; }
 
 /* ───── view tabs (nível 2) ───── */
 .tabs { display: flex; gap: 4px; padding: 6px 22px 0; flex-wrap: wrap; }
+/* esconde os tabs até o boot filtrar por grupo (evita piscar todos os tabs no load) */
+.tabs { opacity: 0; }
+body.booted .tabs { opacity: 1; }
 .tab {
   padding: 9px 16px; border-radius: 9px 9px 0 0; cursor: pointer; font-weight: 600;
   font-size: .82rem; color: var(--text-dim); border: 1px solid transparent; border-bottom: none;

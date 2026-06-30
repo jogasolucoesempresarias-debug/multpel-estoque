@@ -20,7 +20,7 @@ DEFAULTS = {
     "base_estoque":     "gerencial",  # gerencial (QTESTGER cru, oficial v3) | endereco (WMS)
     "lead_time":        10,        # dias (fallback quando o fornecedor não tem prazo)
     "dias_seguranca":   25,        # dias de estoque de segurança
-    "cobertura_total":  30,        # dias-alvo de cobertura (oficial v3 — N2 da planilha)
+    "cobertura_total":  45,        # dias-alvo de cobertura p/ COMPRA (N2 da planilha = 45d)
     "ruptura_dias":     30,        # cobertura <= isso = ruptura
     "horizonte_val":    30,        # janela de risco de vencimento
     "parado_atencao":   60,        # dias sem venda
@@ -141,6 +141,27 @@ def _round(v, n=2):
     return round(v, n) if isinstance(v, (int, float)) else v
 
 
+# cobertura em dias (regra OFICIAL da planilha: ROUNDUP(QTDISP/(GIROMESUNID/30));
+# giro<=0 -> 9999 não calculável; estoque<=0 com giro -> 0). Faixas fixas (independem de
+# parâmetro) — espelham GRAFICO COBERTURA ESTOQUE / resumo_cobertura.
+_FAIXAS_COB_LIM = [("0-30", 30), ("31-60", 60), ("61-90", 90), ("91-120", 120), ("121+", 10**9)]
+
+
+def cobertura_dias_oficial(qtdisp, giro_dia):
+    if giro_dia <= 0:
+        return 9999
+    if qtdisp <= 0:
+        return 0
+    return math.ceil(qtdisp / giro_dia)
+
+
+def cobertura_faixa_de(cob_dias):
+    for nome, hi in _FAIXAS_COB_LIM:
+        if cob_dias <= hi:
+            return nome
+    return "121+"
+
+
 # ───────────────────────── pedido de compra real (Winthor) ─────────────────────────
 def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
     """Pedido de compra REAL em ABERTO por produto, a partir do Winthor (PCPEDIDO×PCITEM).
@@ -229,6 +250,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
                         if serie_am else None)
 
         cobertura = (qtdisp / giro_dia) if giro_dia > 0 and qtdisp > 0 else None
+        # cobertura em dias inteiros + faixa (regra oficial da planilha; faixa fixa)
+        cobertura_dias = cobertura_dias_oficial(qtdisp, giro_dia)
+        cobertura_faixa = cobertura_faixa_de(cobertura_dias)
+        # excesso real só quando a cobertura é CALCULÁVEL e alta (separa de "sem giro" no 121+)
+        excesso_real = giro_dia > 0 and cobertura_dias > 120
 
         dt_saida = _parse_dt(r.get("dtultsaida"))
         dias_sem_venda = (hoje - dt_saida).days if dt_saida else None
@@ -268,34 +294,33 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         else:
             status_abast = "ok"
 
-        # cobertura crítica — limiar = cobertura-alvo (parâmetro do diretor), não mais fixo em 30.
-        # faixas 0-15 (urgente) / 16 → cobertura_total.
+        # cobertura crítica / atenção de abastecimento — bandas FIXAS (manual: cobertura até 30
+        # dias = atenção, dividida em 0-15 urgente / 16-30). Não depende de parâmetro de compra.
         estoque_zero = qtdisp <= 0
-        cob_crit = params["cobertura_total"]
         if giro_dia <= 0:
             status_ruptura = None
         else:
             cob_eff = cobertura if (cobertura is not None) else 0.0
             if cob_eff <= 15:
                 status_ruptura = "0-15"
-            elif cob_eff <= cob_crit:
+            elif cob_eff <= 30:
                 status_ruptura = "16-30"
             else:
                 status_ruptura = None
 
-        # estoque parado / dead stock — por dias sem venda.
-        # Campo único "parado_atencao" (X) define o corte; níveis ancorados em X, X+30, X+60.
+        # estoque parado / dead stock — bandas FIXAS por dias sem venda (manual da planilha:
+        # ATENCAO 60-90, CRITICO 90-120, MUITO CRITICO 120+). Independe de parâmetro — o campo
+        # "parado_atencao" vira só filtro de exibição (mín. dias) na tela/export, não desloca faixa.
         sem_giro = giro_dia <= 0 and qtdisp > 0
-        pa = params["parado_atencao"]
         if qtdisp <= 0:
             status_parado = None
         elif dias_sem_venda is None:
             status_parado = "muito_critico"
-        elif dias_sem_venda >= pa + 60:
+        elif dias_sem_venda >= 120:
             status_parado = "muito_critico"
-        elif dias_sem_venda >= pa + 30:
+        elif dias_sem_venda >= 90:
             status_parado = "critico"
-        elif dias_sem_venda >= pa:
+        elif dias_sem_venda >= 60:
             status_parado = "atencao"
         else:
             status_parado = None
@@ -310,9 +335,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             status_saida = "antiga"
 
         # compra suspensa: tem giro (média 3m, defasada) mas parou de vender há tempo
-        # → não sugerir comprar estoque morto (giro está "preso" no histórico)
+        # → não sugerir comprar estoque morto (giro está "preso" no histórico). Limiar FIXO 60d
+        # (alinha com a faixa "atenção" do parado; não depende mais do parâmetro de exibição).
         compra_suspensa = (giro_dia > 0 and dias_sem_venda is not None
-                           and dias_sem_venda >= params["parado_atencao"])
+                           and dias_sem_venda >= 60)
 
         # venda real (RCA, líquida) do período
         vd = venda_map.get(cod) or {}
@@ -390,6 +416,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "margem": _round(margem * 100, 1) if margem is not None else None,
             "serie_giro": [_round(x) for x in serie],
             "cobertura": _round(cobertura, 1) if cobertura is not None else None,
+            "cobertura_dias": cobertura_dias, "cobertura_faixa": cobertura_faixa,
+            "excesso_real": excesso_real,
             "dias_sem_venda": dias_sem_venda,
             "dtultsaida": dt_saida.isoformat() if dt_saida else None,
             "cv": _round(cv, 3) if cv is not None else None,
@@ -600,7 +628,8 @@ def por_comprador(produtos):
         g["estoque"] += (p["valor"] or 0)
         g["venda"] += (p["venda"] or 0)
         g["lucro"] += (p["lucro"] or 0)
-        if p["status_ruptura"]:
+        # ruptura = critério OFICIAL (estoque <= 0 E giro > 0); cobertura baixa é atenção, não ruptura
+        if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
         if p["status_parado"]:
             g["valor_parado"] += (p["valor"] or 0)
@@ -649,6 +678,66 @@ def ruptura_por_comprador(produtos):
         })
     saida.sort(key=lambda x: x["n_ruptura"], reverse=True)
     return saida
+
+
+# ───────────────────────── desempenho comercial por comprador (RCA) ─────────────────────────
+def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None):
+    """Espelha a aba RECEITA COMPRADOR: venda líquida, lucro bruto, margem ponderada,
+    positivação (clientes distintos), devolução e comparativo ano×ano por comprador.
+    receita_rows: [{CODCOMPRADOR, venda, custo, qtd, clientes_pos, fornecedores}];
+    devol_map: {codcomprador: valor_devolvido}; venda_ant_map: {codcomprador: venda_bruta_ano_ant}."""
+    venda_ant_map = venda_ant_map or {}
+    linhas = []
+    for r in receita_rows:
+        cc = int(_n(r.get("CODCOMPRADOR"))) if r.get("CODCOMPRADOR") not in (None, "") else None
+        if cc is None:
+            continue
+        venda_bruta = _n(r.get("venda"))
+        custo = _n(r.get("custo"))
+        dev = _n(devol_map.get(cc))
+        venda_liq = venda_bruta - dev
+        lucro = venda_liq - custo
+        margem = (lucro / venda_liq) if venda_liq else None
+        venda_ant = _n(venda_ant_map.get(cc))
+        yoy = ((venda_bruta - venda_ant) / venda_ant) if venda_ant > 0 else None
+        linhas.append({
+            "codcomprador": cc,
+            "comprador": comp_map.get(cc) or f"COMPRADOR {cc}",
+            "fornecedores": int(_n(r.get("fornecedores"))),
+            "clientes_pos": int(_n(r.get("clientes_pos"))),
+            "qtd": _round(_n(r.get("qtd"))),
+            "venda_bruta": _round(venda_bruta),
+            "devolucao": _round(dev),
+            "venda_liquida": _round(venda_liq),
+            "lucro_bruto": _round(lucro),
+            "margem": _round(margem * 100, 1) if margem is not None else None,
+            "venda_ano_ant": _round(venda_ant) if venda_ant else None,
+            "yoy": _round(yoy * 100, 1) if yoy is not None else None,
+        })
+    tot_v = sum(l["venda_liquida"] for l in linhas) or 0
+    tot_l = sum(l["lucro_bruto"] for l in linhas) or 0
+    for l in linhas:
+        l["part_receita"] = _round(l["venda_liquida"] / tot_v * 100, 1) if tot_v else 0
+        l["part_lucro"] = _round(l["lucro_bruto"] / tot_l * 100, 1) if tot_l else 0
+        if l["lucro_bruto"] < 0:
+            l["status_lucro"] = "negativo"
+        elif (l["part_lucro"] or 0) >= 30:
+            l["status_lucro"] = "alta"
+        elif (l["part_lucro"] or 0) >= 8:
+            l["status_lucro"] = "boa"
+        else:
+            l["status_lucro"] = "baixa"
+    linhas.sort(key=lambda x: x["lucro_bruto"], reverse=True)
+    for i, l in enumerate(linhas, 1):
+        l["ranking"] = i
+    resumo = {
+        "venda_liquida": _round(tot_v), "lucro_bruto": _round(tot_l),
+        "margem": _round(tot_l / tot_v * 100, 1) if tot_v else None,
+        "clientes_pos": sum(l["clientes_pos"] for l in linhas),
+        "devolucao": _round(sum(l["devolucao"] for l in linhas)),
+        "n_compradores": len(linhas),
+    }
+    return {"resumo": resumo, "compradores": linhas}
 
 
 # ───────────────────────── orçamento de compras (pedido real Winthor) ─────────────────────────

@@ -193,6 +193,54 @@ GROUPBY(
 )"""
 
 
+# ───── Desempenho comercial por COMPRADOR (espelha aba RECEITA COMPRADOR) ─────
+def q_receita_comprador_rca(data_ini, data_fim):
+    """Venda bruta + custo + qtd + positivação (clientes distintos) + nº fornecedores,
+    agrupado por CODCOMPRADOR no período (DTSAIDA). CODCOMPRADOR está no próprio fato."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODCOMPRADOR],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
+        "venda",        [VENDA BRUTA],
+        "custo",        [CUSTO TOTAL],
+        "qtd",          SUM(FATURAMENTO_VENDAS[QT]),
+        "clientes_pos", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]),
+        "fornecedores", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODFORNEC])
+    ),
+    [venda] <> 0 || [qtd] <> 0
+)"""
+
+
+def q_devol_comprador_rca(data_ini, data_fim):
+    """Devolução (valor) por CODCOMPRADOR no período (DTENT) — p/ a venda líquida do comprador."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_DEVOLUCAO[CODCOMPRADOR],
+        FILTER(FATURAMENTO_DEVOLUCAO,
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}),
+        "dev",  [TOTAL DEVOLUCAO]
+    ),
+    [dev] <> 0
+)"""
+
+
+def q_venda_comprador_periodo_rca(data_ini, data_fim):
+    """Venda bruta por CODCOMPRADOR num período arbitrário (p/ comparativo ano×ano)."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODCOMPRADOR],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
+        "venda", [VENDA BRUTA]
+    ),
+    [venda] <> 0
+)"""
+
+
 def q_devol_av_rca(data_ini, data_fim):
     """Devolução avulsa (valor+custo) por CODPROD no período (DTENT)."""
     return f"""EVALUATE
