@@ -162,6 +162,26 @@ def cobertura_faixa_de(cob_dias):
     return "121+"
 
 
+# faixa de "dias parado" (dias sem venda) p/ o relatório de Estoque Parado — indicador.
+# Partição inteira ≥ início (sem gap/overlap); nunca-vendeu (None) = pior (121+); <15 ou sem
+# estoque = fora do parado (None).
+def parado_faixa_de(dias_sem_venda, qtdisp):
+    if qtdisp <= 0:
+        return None
+    d = dias_sem_venda if dias_sem_venda is not None else 10**9
+    if d < 15:
+        return None
+    if d <= 30:
+        return "15-30"
+    if d <= 60:
+        return "31-60"
+    if d <= 90:
+        return "61-90"
+    if d <= 120:
+        return "91-120"
+    return "121+"
+
+
 # ───────────────────────── pedido de compra real (Winthor) ─────────────────────────
 def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
     """Pedido de compra REAL em ABERTO por produto, a partir do Winthor (PCPEDIDO×PCITEM).
@@ -440,6 +460,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "status_parado": status_parado,
             "status_saida": status_saida,
             "sem_giro": sem_giro,
+            "parado_faixa": parado_faixa_de(dias_sem_venda, qtdisp),
             "curva_abc": None, "curva_giro": None, "abc_xyz": None,
         })
 
@@ -1009,13 +1030,22 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
 # ───────────────────────── validade / FEFO ─────────────────────────
 def validade_fefo(lotes, produtos_idx, params, hoje=None):
     hoje = hoje or date.today()
-    out = []
+    # unifica lotes do MESMO produto + validade (soma a qtd) — evita linhas repetidas do mesmo
+    # item e deixa o saldo/risco correto (consumo projetado incide sobre o total, não por lote).
+    agg = {}
     for r in lotes:
         cod = int(_n(r.get("CODPROD")))
         dtval = _parse_dt(r.get("DTVAL"))
         if not dtval:
             continue
-        qt = _n(r.get("qt"))
+        a = agg.setdefault((cod, dtval), {"qt": 0.0, "n_lotes": 0, "lote": None})
+        a["qt"] += _n(r.get("qt"))
+        a["n_lotes"] += 1
+        a["lote"] = r.get("NUMLOTE") or a["lote"]
+
+    out = []
+    for (cod, dtval), a in agg.items():
+        qt = a["qt"]
         p = produtos_idx.get(cod, {})
         giro_dia = p.get("giro_dia") or 0
         custo_unit = p.get("custo_unit") or 0
@@ -1038,12 +1068,16 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
         else:
             risco = "baixo"
 
+        # rótulo do lote: mostra o nº quando é um só; senão indica quantos foram unificados
+        numlote = (a["lote"] or "—") if a["n_lotes"] == 1 else f"{a['n_lotes']} lotes"
+
         out.append({
             "codprod": cod,
             "descricao": p.get("descricao") or f"PRODUTO {cod}",
             "fornecedor": p.get("fornecedor"),
             "comprador": p.get("comprador"),
-            "numlote": r.get("NUMLOTE") or "—",
+            "numlote": numlote,
+            "n_lotes": a["n_lotes"],
             "dtval": dtval.isoformat(),
             "dias_para_vencer": dias,
             "qt": _round(qt),
@@ -1055,7 +1089,7 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
             "classificacao": classif,
             "risco": risco,
         })
-    out.sort(key=lambda x: x["dias_para_vencer"])
+    out.sort(key=lambda x: (x["dias_para_vencer"], -x["valor_risco"]))
     return out
 
 

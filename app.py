@@ -497,7 +497,7 @@ _CSV_COLS = {
     "reposicao": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "giro_mes",
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
-               "valor", "cobertura", "status_parado"],
+               "valor", "cobertura", "parado_faixa"],
     "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
                 "cobertura_faixa", "qtd_ja_pedida", "giro_mes", "sugestao_compra"],
     "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida",
@@ -590,8 +590,12 @@ def _export_data(view):
         if view == "reposicao":
             linhas = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
         elif view == "parado":
-            # agrupado por fornecedor no relatório (mesmo fornecedor junto)
-            linhas = sorted((p for p in produtos if p["status_parado"]),
+            # dias parados >= filtro (param); nunca-vendidos (None) sempre entram. Agrupa por fornecedor.
+            pmin = core.merge_params(request.args.to_dict()).get("parado_atencao", 15)
+            def _pdias(p):
+                d = p.get("dias_sem_venda")
+                return float("inf") if d is None else d
+            linhas = sorted((p for p in produtos if (p.get("qtdisp") or 0) > 0 and _pdias(p) >= pmin),
                             key=lambda p: ((p.get("fornecedor") or "").upper(), p.get("codprod") or 0))
         elif view == "ruptura":
             # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º
@@ -648,7 +652,7 @@ _PDF_COLS = {
                   ("sugestao_compra", "Sugerido", "int")],
     "parado": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
                ("dtultsaida", "Últ. venda", "date"), ("dias_sem_venda", "Dias s/v", "int"), ("qtdisp", "Disp.", "int"),
-               ("valor", "Valor", "money"), ("status_parado", "Classe", "text")],
+               ("valor", "Valor", "money"), ("parado_faixa", "Faixa", "text")],
     "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
                 ("qtdisp", "Disp.", "int"), ("valor", "Valor", "money"), ("cobertura_dias", "Cob.(d)", "int"),
                 ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
@@ -677,7 +681,7 @@ _PDF_COLS = {
                    ("yoy", "Ano×Ano", "pct")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
-               "parado": "Estoque parado", "ruptura": "Cobertura crítica", "validade": "Validade / FEFO",
+               "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
                "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial"}
 

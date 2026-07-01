@@ -518,31 +518,43 @@ function drawFaixaChart(id,faixas,onPick){
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+faixas[c.dataIndex].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
 }
 
+// "dias parados" = dias sem venda; nunca-vendeu (null) conta como o pior (infinito → cai em 121+)
+function paradoDias(p){ return (p.dias_sem_venda==null) ? Infinity : p.dias_sem_venda; }
+// faixas FIXAS do gráfico-indicador (partição inteira, ≥ início, sem gap nem sobreposição)
+const FX_PARADO=[{label:'15-30',lo:15,hi:30,color:C.green},{label:'31-60',lo:31,hi:60,color:C.yellow},
+  {label:'61-90',lo:61,hi:90,color:C.orange},{label:'91-120',lo:91,hi:120,color:C.red},
+  {label:'121+',lo:121,hi:Infinity,color:C.purple}];
+function paradoFaixaLabel(p){ const d=paradoDias(p); const f=FX_PARADO.find(f=>d>=f.lo&&d<=f.hi); return f?f.label:null; }
+function setParMin(v){ S.params.parado=v; const i=$('#p-parado'); if(i)i.value=v; render(); savePrefs(); }
+
 function renderParado(P){
-  const allPar=P.filter(p=>p.status_parado);
-  const FX=[{label:'Atenção 60-90',color:C.yellow,key:'atencao'},{label:'Crítico 90-120',color:C.orange,key:'critico'},{label:'Muito crítico 120+',color:C.red,key:'muito_critico'}];
-  const faixas=FX.map(f=>{const it=allPar.filter(p=>p.status_parado===f.key);return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
-  const active=S.cli.parClasse||'';
-  const par=(active?allPar.filter(p=>p.status_parado===active):allPar);
-  // agrupa por fornecedor (mesmo fornecedor junto, ordenado por maior valor parado)
+  // GRÁFICO = indicador do valor parado por faixa fixa (15+; nunca-vendeu em 121+). Independe do filtro.
+  const faixas=FX_PARADO.map(f=>{const it=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=f.lo && paradoDias(p)<=f.hi);
+    return{...f,key:f.label,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
+  // TABELA = itens parados há >= minDias (nunca-vendidos sempre entram). Agrupada por fornecedor.
+  const minDias=+S.params.parado||15;
+  const par=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=minDias);
   const g={}; par.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor||0);});
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   grupos.forEach(gr=>gr.itens.sort((a,b)=>(b.valor||0)-(a.valor||0)));
+  const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Por faixa (dias sem venda)',faixas,allPar,p=>p.valor,active,'ch-parado')
-    +(active?`<div class="count-line">Filtrando <b>${FX.find(f=>f.key===active)?.label||active}</b> · <a href="#" id="par-clear">limpar</a></div>`:'')
-    +`<div class="count-line">Agrupado por fornecedor (maior valor parado primeiro). Faixas fixas: atenção 60-90 · crítico 90-120 · muito crítico 120+ dias.</div>`
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda) — indicador',faixas,par,p=>p.valor,'','ch-parado')
+    +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
+        <div class="fb-group"><label>Dias parados (≥)</label><input type="number" id="par-min" value="${int(minDias)}" min="0" step="5" style="width:100px"></div>
+        <div class="count-line" style="margin:0">Puxa <b>${int(totItens)} itens</b> (${money(totVal)}) parados há <b>${int(minDias)} dias ou mais</b> — nunca vendidos incluídos. O gráfico acima é só indicador e não muda com o filtro. Clicar numa faixa é atalho (= início da faixa).</div>
+      </div>`
     +grupos.map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span><span>${money(gr.valor)}</span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Última venda</th><th class="num">Dias s/v</th><th class="num">Disp.</th><th class="num">Valor</th><th>Saída</th><th>Classe</th><th>Ação</th></tr></thead>
-        <tbody>${gr.itens.map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td><td>${dt(p.dtultsaida)}</td><td class="num">${p.dias_sem_venda==null?'sem saída':int(p.dias_sem_venda)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${money(p.valor)}</td><td>${badge(p.status_saida)}</td><td>${badge(p.status_parado)}</td><td>${planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Última venda</th><th class="num">Dias parado</th><th class="num">Disp.</th><th class="num">Valor</th><th>Saída</th><th>Faixa</th><th>Ação</th></tr></thead>
+        <tbody>${gr.itens.map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td><td>${dt(p.dtultsaida)}</td><td class="num">${p.dias_sem_venda==null?'nunca':int(p.dias_sem_venda)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${money(p.valor)}</td><td>${badge(p.status_saida)}</td><td>${badge(paradoFaixaLabel(p))}</td><td>${planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')
-    +(grupos.length?'':'<div class="empty">Nenhum item parado no filtro 🎉</div>');
-  drawFaixaChart('ch-parado',faixas,f=>{S.cli.parClasse=(active===f.key)?'':f.key;render();});
-  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const k=d.dataset.fkey;S.cli.parClasse=(active===k)?'':k;render();});
-  const pc=$('#par-clear'); if(pc)pc.onclick=e=>{e.preventDefault();S.cli.parClasse='';render();};
+    +(grupos.length?'':`<div class="empty">Nenhum item parado há ≥ ${int(minDias)} dias 🎉</div>`);
+  drawFaixaChart('ch-parado',faixas,f=>{const b=FX_PARADO.find(x=>x.label===f.key); if(b)setParMin(b.lo);});
+  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const b=FX_PARADO.find(x=>x.label===d.dataset.fkey); if(b)setParMin(b.lo);});
+  const pm=$('#par-min'); if(pm) pm.onchange=e=>setParMin(+e.target.value||0);
   el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact')&&!e.target.closest('.plano-set'))openProduto(tr.dataset.cod);});
   wirePorComprador(el);
   wirePlanoCells();
