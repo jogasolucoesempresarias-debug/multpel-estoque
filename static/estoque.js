@@ -12,7 +12,7 @@ const PREF = 'multpel_estoque_prefs';
 
 const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
-  filiaisAll:[], filiaisSel:new Set(), base:'endereco', vperiodo:'mes', cvDim:'comprador',
+  filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
@@ -82,7 +82,7 @@ async function loadData(){
       getJSON('/api/snapshot?'+qs), getJSON('/api/validade?'+qs), getJSON('/api/planos').catch(()=>({planos:{}}))]);
     S.produtosAll=snap.produtos; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
     $('#meta-gerado').textContent='Atualizado em '+snap.gerado_em;
-    $('#meta-filiais').textContent='filiais '+(Array.isArray(snap.filiais)?snap.filiais.join(','):snap.filiais)+' · '+snap.n+' itens · '+(S.base==='endereco'?'endereçado':'gerencial');
+    $('#meta-filiais').textContent='filiais '+(Array.isArray(snap.filiais)?snap.filiais.join(','):snap.filiais)+' · '+snap.n+' itens · gerencial';
   }catch(e){ toast('Falha ao carregar: '+e.message,true); console.error(e); }
   $('#loader').style.display='none'; $('#content').style.display='block';
   render();
@@ -1010,7 +1010,7 @@ function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||
 /* ───────── boot ───────── */
 async function init(){
   const pr=loadPrefs();
-  if(pr.base) S.base=pr.base; if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};
+  if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};   // base fixa em gerencial (endereçado só p/ validade, que é isolada)
   if(pr.view) S.view=pr.view;
   applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
   document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
@@ -1027,7 +1027,6 @@ async function init(){
     if(pr.comprador){ S.cli.comprador=pr.comprador; $('#f-comprador').value=pr.comprador; S.compradorNome=pr.comprador?($('#f-comprador').selectedOptions[0]?.textContent||''):''; }
   }catch(e){ toast('Falha nos filtros: '+e.message,true); }
   // base toggle visual
-  $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',o.dataset.v===S.base));
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
   $('#p-parado').value=S.params.parado; $('#p-fcmeses').value=S.params.fcmeses;
@@ -1040,7 +1039,6 @@ async function init(){
   // comprador → client filter + define visão inicial
   $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.value?(e.target.selectedOptions[0]?.textContent||''):''; render(); };
   $('#f-filiais').querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const v=ch.dataset.f;ch.classList.toggle('on');ch.classList.contains('on')?S.filiaisSel.add(v):S.filiaisSel.delete(v); if(!S.filiaisSel.size){ch.classList.add('on');S.filiaisSel.add(v);return;} loadData();});
-  $('#f-base').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{S.base=o.dataset.v;$('#f-base').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));loadData();});
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};
   $('#f-curva').onchange=e=>{S.cli.curva=e.target.value;render();};
   $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};

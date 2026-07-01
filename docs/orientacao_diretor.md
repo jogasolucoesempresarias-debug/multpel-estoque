@@ -5,7 +5,7 @@ Texto para repassar ao diretor. Resume o que foi corrigido, o que era uso dos pa
 ## O que foi ajustado conforme a planilha
 
 - **Cobertura de estoque (aba "Cobertura"):** agora segue a métrica oficial da planilha — 5 faixas fixas (`0-30 risco / 31-60 OK / 61-90 atenção / 91-120 urgente / 121+ crítico`), com **valor de estoque por faixa** e na tabela. Dá pra clicar na faixa e **ordenar por maior valor** para priorizar ação. Na faixa 121+ separamos "sem giro" (estoque morto → liquidar) de "excesso real" (cobertura alta → reduzir compra).
-  - **Importante:** seguindo sua própria regra (endereçado só para validade; gerencial para o resto), use a base **Gerencial** para conferir a cobertura. Vamos deixar o Gerencial como **padrão** do painel para você não precisar lembrar de trocar.
+  - **Pronto:** seguindo sua regra (endereçado só para validade; gerencial para o resto), o painel agora usa a base **Gerencial fixa** — o botão de troca foi removido. A **Validade continua endereçada** (é isolada).
 
 - **Ruptura por comprador (aba Compras × Vendas):** estava contando "cobertura baixa" como ruptura (inflava). Corrigido para o **critério oficial da planilha**: ruptura = estoque zero/negativo **e** giro positivo. Cobertura de 1 a 30 dias é **atenção, não ruptura**. Agora bate com o painel gerencial.
 
