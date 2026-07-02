@@ -34,7 +34,7 @@ const dt = s => s ? s.split('-').reverse().join('/') : '—';
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = (v,txt) => v==null||v===''?'':`<span class="badge b-${String(v).replace(/[^a-z0-9_-]/gi,'')}">${esc(txt!=null?txt:v)}</span>`;
 // status executivo do abastecimento (metodologia v3) → rótulo + cor
-const STAT_EXEC={ruptura_sem_pedido:['Ruptura s/ pedido','#ef4444'],ruptura_pedido_parcial:['Ruptura · pedido parcial','#f97316'],ruptura_pedido_cobre:['Ruptura · pedido cobre','#eab308'],compra_urgente:['Compra urgente','#ef4444'],compra_alta:['Compra alta','#f97316'],compra_complementar:['Compra complementar','#38bdf8'],programar_compra:['Programar compra','#a78bfa'],pedido_cobre:['Pedido cobre','#22c55e'],estoque_ok:['Estoque OK','#22c55e']};
+const STAT_EXEC={ruptura_sem_pedido:['Ruptura s/ pedido','#ef4444'],ruptura_pedido_parcial:['Ruptura · pedido parcial','#f97316'],ruptura_pedido_cobre:['Ruptura · pedido cobre','#eab308'],compra_urgente:['Compra urgente','#ef4444'],compra_alta:['No prazo','#eab308'],compra_complementar:['Compra complementar','#38bdf8'],programar_compra:['Programar compra','#a78bfa'],pedido_cobre:['Pedido cobre','#22c55e'],estoque_ok:['Estoque OK','#22c55e']};
 const statExec = v => { const s=STAT_EXEC[v]; return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—'; };
 // sugestão em caixas a partir do campo já calculado no servidor (sugestao_cx) + unidades
 const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` · ${int((p.sugestao_cx||0)*(p.caixa||1))} un`:''}` : '—');
