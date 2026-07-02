@@ -581,6 +581,7 @@ def cockpit(produtos):
 def fornecedores(produtos, params=None):
     total_valor = sum(p["valor"] or 0 for p in produtos) or 1
     total_giro = sum(p["giro_mes"] or 0 for p in produtos) or 1
+    total_venda = sum(p["venda"] or 0 for p in produtos) or 1
     grupos = {}
     for p in produtos:
         cf = p["codfornec"]
@@ -606,11 +607,15 @@ def fornecedores(produtos, params=None):
     saida = []
     for g in grupos.values():
         perc_giro = g["giro"] / total_giro * 100
+        perc_venda = g["venda"] / total_venda * 100
         perc_est = g["valor"] / total_valor * 100
-        indice = (perc_giro / perc_est) if perc_est > 0 else (999.0 if perc_giro > 0 else 0.0)
+        # índice = participação na VENDA (R$) ÷ participação no ESTOQUE (R$) — "vende mais do que
+        # pesa em estoque". Antes usava giro em UNIDADES, o que distorcia fornecedores de alto
+        # valor/baixo volume (ex.: embalagem cara vendendo bem virava "estoque alto").
+        indice = (perc_venda / perc_est) if perc_est > 0 else (999.0 if perc_venda > 0 else 0.0)
         # cobertura média do fornecedor (dias) — distingue eficiência real de desabastecimento
         cobertura = (g["disponivel"] / g["giro_dia"]) if g["giro_dia"] > 0 else None
-        if g["giro"] <= 0:
+        if g["giro"] <= 0 and g["venda"] <= 0:
             classif = "critico_sem_giro"
         elif cobertura is not None and cobertura < lead:
             classif = "ruptura"            # gira mas quase sem estoque (não é performance)
@@ -626,7 +631,8 @@ def fornecedores(produtos, params=None):
             "venda": _round(g["venda"]), "lucro": _round(g["lucro"]),
             "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
             "cobertura": _round(cobertura, 1) if cobertura is not None else None,
-            "perc_giro": _round(perc_giro, 2), "perc_estoque": _round(perc_est, 2),
+            "perc_giro": _round(perc_giro, 2), "perc_venda": _round(perc_venda, 2),
+            "perc_estoque": _round(perc_est, 2),
             "indice": _round(indice, 2), "classificacao": classif,
         })
     saida.sort(key=lambda x: x["valor"], reverse=True)
@@ -702,12 +708,13 @@ def ruptura_por_comprador(produtos):
 
 
 # ───────────────────────── desempenho comercial por comprador (RCA) ─────────────────────────
-def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None):
+def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, custo_ant_map=None):
     """Espelha a aba RECEITA COMPRADOR: venda líquida, lucro bruto, margem ponderada,
-    positivação (clientes distintos), devolução e comparativo ano×ano por comprador.
+    positivação (clientes distintos), devolução e comparativo ano×ano (venda E lucro) por comprador.
     receita_rows: [{CODCOMPRADOR, venda, custo, qtd, clientes_pos, fornecedores}];
-    devol_map: {codcomprador: valor_devolvido}; venda_ant_map: {codcomprador: venda_bruta_ano_ant}."""
+    devol_map: {codcomprador: valor_devolvido}; venda_ant_map/custo_ant_map: {cc: valor} do ano ant."""
     venda_ant_map = venda_ant_map or {}
+    custo_ant_map = custo_ant_map or {}
     linhas = []
     for r in receita_rows:
         cc = int(_n(r.get("CODCOMPRADOR"))) if r.get("CODCOMPRADOR") not in (None, "") else None
@@ -721,6 +728,9 @@ def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None):
         margem = (lucro / venda_liq) if venda_liq else None
         venda_ant = _n(venda_ant_map.get(cc))
         yoy = ((venda_bruta - venda_ant) / venda_ant) if venda_ant > 0 else None
+        # lucro do ano anterior (bruto = venda_ant − custo_ant) p/ o ano×ano do lucro
+        lucro_ant = venda_ant - _n(custo_ant_map.get(cc))
+        yoy_lucro = ((lucro - lucro_ant) / abs(lucro_ant)) if lucro_ant > 0 else None
         linhas.append({
             "codcomprador": cc,
             "comprador": comp_map.get(cc) or f"COMPRADOR {cc}",
@@ -734,6 +744,8 @@ def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None):
             "margem": _round(margem * 100, 1) if margem is not None else None,
             "venda_ano_ant": _round(venda_ant) if venda_ant else None,
             "yoy": _round(yoy * 100, 1) if yoy is not None else None,
+            "lucro_ano_ant": _round(lucro_ant) if lucro_ant else None,
+            "yoy_lucro": _round(yoy_lucro * 100, 1) if yoy_lucro is not None else None,
         })
     tot_v = sum(l["venda_liquida"] for l in linhas) or 0
     tot_l = sum(l["lucro_bruto"] for l in linhas) or 0

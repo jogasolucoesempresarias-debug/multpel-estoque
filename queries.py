@@ -228,14 +228,15 @@ FILTER(
 
 
 def q_venda_comprador_periodo_rca(data_ini, data_fim):
-    """Venda bruta por CODCOMPRADOR num período arbitrário (p/ comparativo ano×ano)."""
+    """Venda bruta + custo por CODCOMPRADOR num período (p/ comparativo ano×ano de venda E lucro)."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODCOMPRADOR],
         FILTER(FATURAMENTO_VENDAS,
             FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
-        "venda", [VENDA BRUTA]
+        "venda", [VENDA BRUTA],
+        "custo", [CUSTO TOTAL]
     ),
     [venda] <> 0
 )"""

@@ -364,18 +364,19 @@ function renderQualidade(P){
 function renderReposicao(P){
   const rep=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const suspensos=P.filter(p=>p.compra_suspensa).sort((a,b)=>(b.sugestao_compra*b.custo_unit)-(a.sugestao_compra*a.custo_unit));
-  // agrupa por fornecedor
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0);});
+  // agrupa por fornecedor (+ cubagem do pedido sugerido = Σ caixas sugeridas × volume da caixa)
+  const cubItem=p=>(p.sugestao_cx||0)*(p.cubagem_caixa_m3||0);
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,cub:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p);});
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × ${int(S.params.cob)}d) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. Lead time usa o prazo do fornecedor quando houver.</div>`+
+    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × ${int(S.params.cob)}d) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). Lead time usa o prazo do fornecedor quando houver.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
-        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span>
+        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">m³</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
@@ -531,31 +532,27 @@ function renderParado(P){
   // GRÁFICO = indicador do valor parado por faixa fixa (15+; nunca-vendeu em 121+). Independe do filtro.
   const faixas=FX_PARADO.map(f=>{const it=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=f.lo && paradoDias(p)<=f.hi);
     return{...f,key:f.label,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
-  // TABELA = itens parados há >= minDias (nunca-vendidos sempre entram). Agrupada por fornecedor.
+  // TABELA = lista ordenável dos itens parados há >= minDias (nunca-vendidos sempre entram).
   const minDias=+S.params.parado||15;
   const par=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=minDias);
-  const g={}; par.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor||0);});
-  const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
-  grupos.forEach(gr=>gr.itens.sort((a,b)=>(b.valor||0)-(a.valor||0)));
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
+  if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
+  const cols=[colCod,colProd,colForn,{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
+    {key:'dias_sem_venda',label:'Dias parado',num:true,fmt:v=>v==null?'nunca':int(v)},
+    {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'valor',label:'Valor',num:true,fmt:money},
+    {key:'status_saida',label:'Saída',badge:true},{key:'parado_faixa',label:'Faixa',badge:true},
+    {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
     +resumoFaixasBlock('Valor parado por faixa (dias sem venda) — indicador',faixas,par,p=>p.valor,'','ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Dias parados (≥)</label><input type="number" id="par-min" value="${int(minDias)}" min="0" step="5" style="width:100px"></div>
-        <div class="count-line" style="margin:0">Puxa <b>${int(totItens)} itens</b> (${money(totVal)}) parados há <b>${int(minDias)} dias ou mais</b> — nunca vendidos incluídos. O gráfico acima é só indicador e não muda com o filtro. Clicar numa faixa é atalho (= início da faixa).</div>
+        <div class="count-line" style="margin:0">Puxa <b>${int(totItens)} itens</b> (${money(totVal)}) parados há <b>${int(minDias)} dias ou mais</b> — nunca vendidos incluídos. Lista ordenável (clique no cabeçalho). O gráfico é só indicador e não muda com o filtro; clicar numa faixa é atalho (= início da faixa).</div>
       </div>`
-    +grupos.map(gr=>`
-      <div class="panel forn-grp">
-        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens</small></span><span>${money(gr.valor)}</span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Última venda</th><th class="num">Dias parado</th><th class="num">Disp.</th><th class="num">Valor</th><th>Saída</th><th>Faixa</th><th>Ação</th></tr></thead>
-        <tbody>${gr.itens.map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td><td>${dt(p.dtultsaida)}</td><td class="num">${p.dias_sem_venda==null?'nunca':int(p.dias_sem_venda)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${money(p.valor)}</td><td>${badge(p.status_saida)}</td><td>${badge(paradoFaixaLabel(p))}</td><td>${planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}</td></tr>`).join('')}</tbody></table></div>
-      </div>`).join('')
-    +(grupos.length?'':`<div class="empty">Nenhum item parado há ≥ ${int(minDias)} dias 🎉</div>`);
+    +renderTable(par,cols,'parado');
   drawFaixaChart('ch-parado',faixas,f=>{const b=FX_PARADO.find(x=>x.label===f.key); if(b)setParMin(b.lo);});
   el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const b=FX_PARADO.find(x=>x.label===d.dataset.fkey); if(b)setParMin(b.lo);});
   const pm=$('#par-min'); if(pm) pm.onchange=e=>setParMin(+e.target.value||0);
-  el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact')&&!e.target.closest('.plano-set'))openProduto(tr.dataset.cod);});
   wirePorComprador(el);
   wirePlanoCells();
 }
@@ -574,17 +571,19 @@ function renderABCXYZ(P){
 }
 
 function renderFornecedores(P){
-  const tv=P.reduce((s,p)=>s+(p.valor||0),0)||1,tg=P.reduce((s,p)=>s+(p.giro_mes||0),0)||1,g={};
+  const tv=P.reduce((s,p)=>s+(p.valor||0),0)||1,tvenda=P.reduce((s,p)=>s+(p.venda||0),0)||1,g={};
   P.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
   const lead=S.params.lead||10;
-  const F=Object.values(g).map(o=>{const pg=o.giro/tg*100,pe=o.valor/tv*100,idx=pe>0?pg/pe:(pg>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
-    let cl=o.giro<=0?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
-    return{...o,pg,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,cl};}).sort((a,b)=>b.valor-a.valor);
+  // índice = % na VENDA (R$) ÷ % no ESTOQUE (R$) — "vende mais do que pesa". Antes usava giro em
+  // unidades, distorcendo fornecedor de alto valor/baixo volume.
+  const F=Object.values(g).map(o=>{const pv=o.venda/tvenda*100,pe=o.valor/tv*100,idx=pe>0?pv/pe:(pv>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
+    let cl=(o.giro<=0&&o.venda<=0)?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
+    return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,cl};}).sort((a,b)=>b.valor-a.valor);
   const cols=[{key:'codfornec',label:'Cód',num:true},{key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod">${esc(v)}</span>`},
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'venda',label:'Venda',num:true,fmt:money},{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
-    {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pg',label:'% giro',num:true,fmt:v=>dec(v,1)+'%'},
+    {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pv',label:'% venda',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
   const CLS={alta_performance:'Alta performance',equilibrado:'Equilibrado',estoque_alto:'Estoque alto',ruptura:'Ruptura',critico_sem_giro:'Crítico s/ giro'};
   const Ff=S.cli.fornClasse?F.filter(r=>r.cl===S.cli.fornClasse):F;
@@ -598,7 +597,7 @@ function renderFornecedores(P){
          <option value="">Todas</option>
          ${Object.keys(CLS).map(k=>`<option value="${k}" ${S.cli.fornClasse===k?'selected':''}>${CLS[k]}</option>`).join('')}
        </select></div>
-     <div class="count-line">Índice = % no giro ÷ % no estoque (&gt;1 = gira mais do que pesa). <b>Ruptura</b> = gira mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
+     <div class="count-line">Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
   $('#v-fornecedores').querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['fornecedores']||{};S.sort['fornecedores']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
   const fc=$('#forn-cl'); if(fc) fc.onchange=e=>{S.cli.fornClasse=e.target.value;render();};
 }
@@ -633,10 +632,16 @@ function renderRupturaComprador(P){
 }
 
 function renderProdutos(P){
+  // colunas em caixa (mantém unidade e ACRESCENTA cx) — fator un/cx de cada item
+  P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):(p.giro_mes||0); p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):(p.qtdisp||0);});
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'xyz',label:'XYZ',badge:true},
-    {key:'qtdisp',label:'Disp.',num:true,fmt:int},colGiroSpark,{key:'cobertura',label:'Cob.',num:true,fmt:cob},
-    {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},{key:'valor',label:'Valor',num:true,fmt:money},
-    {key:'status_abast',label:'Abast.',badge:true}];
+    {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
+    colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'cobertura',label:'Cob.',num:true,fmt:cob},
+    {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'venda',label:'Venda',num:true,fmt:money},{key:'lucro',label:'Lucro',num:true,fmt:money},
+    {key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
+    {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
   $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+renderTable(P,cols,'produtos');
 }
 
@@ -653,7 +658,7 @@ async function renderDesempenho(){
   const ck=[{k:'ranking',label:'#',num:1},{k:'comprador',label:'Comprador'},{k:'fornecedores',label:'Fornec.',num:1},
     {k:'clientes_pos',label:'Positivação',num:1},{k:'venda_liquida',label:'Venda líq.',num:1},{k:'lucro_bruto',label:'Lucro bruto',num:1},
     {k:'margem',label:'Margem',num:1},{k:'devolucao',label:'Devolução',num:1},{k:'part_lucro',label:'% Lucro',num:1},
-    {k:'yoy',label:'Ano×Ano',num:1},{k:'status_lucro',label:'Status'}];
+    {k:'yoy',label:'AA Venda',num:1},{k:'yoy_lucro',label:'AA Lucro',num:1},{k:'status_lucro',label:'Status'}];
   const sk=S.sort['desempenho']||{key:'lucro_bruto',dir:-1};
   rows=[...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
     if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
@@ -668,7 +673,7 @@ async function renderDesempenho(){
       ${kpi('Positivação',int(r.clientes_pos),'clientes distintos',C.accent)}
       ${kpi('Devolução',money(r.devolucao),'',C.red)}</div>
     <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map(p=>`<tr><td class="num">${int(p.ranking)}</td><td><span class="prod">${esc(p.comprador)}</span></td><td class="num">${int(p.fornecedores)}</td><td class="num">${int(p.clientes_pos)}</td><td class="num">${money(p.venda_liquida)}</td><td class="num">${money(p.lucro_bruto)}</td><td class="num">${p.margem==null?'—':dec(p.margem,1)+'%'}</td><td class="num">${money(p.devolucao)}</td><td class="num">${dec(p.part_lucro||0,1)}%</td><td class="num">${yoyCell(p.yoy)}</td><td>${statCell(p.status_lucro)}</td></tr>`).join('')||'<tr><td colspan="11" class="muted">Sem dados de venda no período.</td></tr>'}</tbody></table></div>
+    <tbody>${rows.map(p=>`<tr><td class="num">${int(p.ranking)}</td><td><span class="prod">${esc(p.comprador)}</span></td><td class="num">${int(p.fornecedores)}</td><td class="num">${int(p.clientes_pos)}</td><td class="num">${money(p.venda_liquida)}</td><td class="num">${money(p.lucro_bruto)}</td><td class="num">${p.margem==null?'—':dec(p.margem,1)+'%'}</td><td class="num">${money(p.devolucao)}</td><td class="num">${dec(p.part_lucro||0,1)}%</td><td class="num">${yoyCell(p.yoy)}</td><td class="num">${yoyCell(p.yoy_lucro)}</td><td>${statCell(p.status_lucro)}</td></tr>`).join('')||'<tr><td colspan="12" class="muted">Sem dados de venda no período.</td></tr>'}</tbody></table></div>
     <div class="count-line">${rows.length} compradores · positivação = clientes distintos atendidos no período (DISTINCTCOUNT cliente).</div>`;
   el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['desempenho']||{};S.sort['desempenho']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
 }

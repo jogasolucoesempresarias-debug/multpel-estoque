@@ -278,15 +278,16 @@ def _desempenho_data(periodo, hoje):
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 devol[int(core._n(cc))] = core._n(r.get("dev"))
-        # mesmo período no ano anterior (comparativo YoY por comprador)
+        # mesmo período no ano anterior (comparativo YoY de venda E lucro por comprador)
         ini_ant = ini.replace(year=ini.year - 1)
         fim_ant = fim.replace(year=fim.year - 1)
-        venda_ant = {}
+        venda_ant, custo_ant = {}, {}
         for r in pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant)):
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 venda_ant[int(core._n(cc))] = core._n(r.get("venda"))
-        res = core.desempenho_comprador(receita, devol, _compradores_map(), venda_ant)
+                custo_ant[int(core._n(cc))] = core._n(r.get("custo"))
+        res = core.desempenho_comprador(receita, devol, _compradores_map(), venda_ant, custo_ant)
     except Exception as e:
         print(f"[desempenho] RCA indisponível ({e}). Aba de desempenho desabilitada.")
         res = {"resumo": {}, "compradores": []}
@@ -567,7 +568,7 @@ def _export_data(view):
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
         cols = ["codfornec", "fornecedor", "comprador", "n_produtos", "valor", "giro", "cobertura",
-                "venda", "lucro", "margem", "perc_giro", "perc_estoque", "indice", "classificacao"]
+                "venda", "lucro", "margem", "perc_venda", "perc_estoque", "indice", "classificacao"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()
         linhas = core.por_comprador(_aplicar_filtros_cliente(produtos))
@@ -582,7 +583,7 @@ def _export_data(view):
         linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje())["compradores"]
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
-                "venda_ano_ant", "yoy", "status_lucro"]
+                "yoy", "yoy_lucro", "status_lucro"]
     else:
         produtos, _, _ = _build_produtos()
         produtos = _aplicar_filtros_cliente(produtos)
@@ -678,7 +679,7 @@ _PDF_COLS = {
                    ("clientes_pos", "Positivação", "int"), ("venda_liquida", "Venda líq.", "money"),
                    ("lucro_bruto", "Lucro bruto", "money"), ("margem", "Margem", "pct"),
                    ("devolucao", "Devolução", "money"), ("part_lucro", "% Lucro", "num"),
-                   ("yoy", "Ano×Ano", "pct")],
+                   ("yoy", "AA Venda", "pct"), ("yoy_lucro", "AA Lucro", "pct")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
