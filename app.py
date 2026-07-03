@@ -527,6 +527,8 @@ def _aplicar_filtros_cliente(produtos):
         out = [p for p in out if str(p.get("codfornec")) == g("fornec")]
     if g("depto"):
         out = [p for p in out if str(p.get("codepto")) == g("depto")]
+    if g("abast"):
+        out = [p for p in out if p.get("status_abast") == g("abast")]
     bs = g("busca")
     if bs:
         bs = bs.lower()
