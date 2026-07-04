@@ -1039,7 +1039,7 @@ async function init(){
     S.filiaisSel=new Set(fsel);
     $('#f-filiais').innerHTML=f.filiais.map(x=>`<span class="chip ${S.filiaisSel.has(x)?'on':''}" data-f="${x}">${x}</span>`).join('');
     S.fornecedores=f.fornecedores||[];
-    $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${esc(o.fornecedor)}">`).join('');
+    $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${o.codfornec} · ${esc(o.fornecedor)}">`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
     $('#f-comprador').innerHTML='<option value="">Empresa toda</option>'+f.compradores.filter(c=>c.codcomprador>0).map(c=>`<option value="${c.codcomprador}">${esc(c.comprador)}</option>`).join('');
     if(pr.comprador){ S.cli.comprador=pr.comprador; $('#f-comprador').value=pr.comprador; S.compradorNome=pr.comprador?($('#f-comprador').selectedOptions[0]?.textContent||''):''; }
@@ -1061,10 +1061,14 @@ async function init(){
   $('#f-curva').onchange=e=>{S.cli.curva=e.target.value;render();};
   $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};
   $('#f-fornec').onchange=e=>{
-    const nome=(e.target.value||'').trim();
-    const m=nome?(S.fornecedores||[]).find(x=>(x.fornecedor||'').toLowerCase()===nome.toLowerCase()):null;
+    const raw=(e.target.value||'').trim(), low=raw.toLowerCase(), L=S.fornecedores||[];
+    const cod=(raw.match(/^\s*(\d+)/)||[])[1];                     // código à esquerda ("708 · NOME") ou digitado puro
+    let m = cod ? L.find(x=>String(x.codfornec)===cod) : null;
+    if(!m) m=L.find(x=>`${x.codfornec} · ${x.fornecedor||''}`.toLowerCase()===low)  // valor exato do datalist
+             ||L.find(x=>(x.fornecedor||'').toLowerCase()===low);                   // razão social exata
+    if(!m){ const hits=L.filter(x=>(x.fornecedor||'').toLowerCase().includes(low)); if(hits.length===1) m=hits[0]; } // parcial só se única
     S.cli.fornec=m?String(m.codfornec):'';
-    if(nome&&!m) e.target.value='';   // texto sem correspondência → volta p/ Todos
+    e.target.value=m?`${m.codfornec} · ${m.fornecedor}`:'';        // normaliza p/ "código · razão"; sem correspondência → volta p/ Todos
     render();
   };
   $('#f-depto').onchange=e=>{S.cli.depto=e.target.value;render();};
