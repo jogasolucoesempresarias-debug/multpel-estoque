@@ -42,7 +42,7 @@ const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` ·
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
@@ -212,12 +212,7 @@ function renderCockpit(P){
      ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
-   <div id="ck-resumos" style="margin-top:4px"><div class="count-line">Carregando resumos gerenciais…</div></div>
    <div class="row">
-     <div class="panel grow"><h3>Onde está o capital (cobertura de estoque)</h3>
-       <div class="row" style="align-items:center"><div style="width:200px"><div class="chart-box sm" style="height:190px"><canvas id="ch-faixas"></canvas></div></div>
-       <div class="grow"><table class="mini">${k.faixas.map(f=>`<tr><td><span class="dot" style="background:${COR_FAIXA[f.faixa]}"></span> ${f.faixa}${f.faixa!=='sem giro'?'d':''}</td><td class="num">${int(f.qt)}</td><td class="num">${money(f.valor)}</td></tr>`).join('')}</table></div></div>
-     </div>
      <div class="panel grow"><h3>Curva ABC (valor em estoque)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
        <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${money(k.abc[c].valor)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.valor_total?k.abc[c].valor/k.valor_total*100:0,0)}% do valor</td></tr>`).join('')}</table>
      </div>
@@ -226,7 +221,6 @@ function renderCockpit(P){
      <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
    </div>`;
-  chart('ch-faixas',{type:'doughnut',data:{labels:k.faixas.map(f=>f.faixa),datasets:[{data:k.faixas.map(f=>f.valor),backgroundColor:k.faixas.map(f=>COR_FAIXA[f.faixa]),borderWidth:0}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>k.faixas[c.dataIndex].faixa+': '+money(c.raw)}}},cutout:'62%'}});
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].valor),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
   const topVen=(S.validade?.lotes||[]).slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
@@ -234,7 +228,6 @@ function renderCockpit(P){
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
   el.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
   wireAlerts(el);
-  injectResumos('#ck-resumos');
 }
 
 // faixas de cobertura — métrica OFICIAL da planilha (GRAFICO COBERTURA ESTOQUE), faixas fixas
@@ -807,6 +800,33 @@ async function injectResumos(sel){
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
 }
 
+// paleta p/ o donut de lucro por comprador
+const PAL_COMP=[C.accent,C.green,C.purple,C.orange,C.accent2,C.yellow,C.red,C.dim];
+// Aba "Painel gerencial": os 5 pilares (orçamento, ruptura, validade, cobertura + participação de lucro por comprador).
+function renderGerencial(P){
+  const el=$('#v-gerencial');
+  el.innerHTML=`<div id="gg-resumos"><div class="count-line">Carregando resumos gerenciais…</div></div>
+    <h2 class="section"><span>Participação de lucro por comprador</span></h2>
+    <div class="row"><div class="panel grow">
+      <div class="row" style="align-items:center">
+        <div style="width:230px"><div class="chart-box sm" style="height:210px"><canvas id="ch-lucrocomp"></canvas></div></div>
+        <div class="grow"><table class="mini" id="gg-lucrotab"></table></div>
+      </div>
+      <div class="count-line" style="margin-top:6px">Lucro (venda líquida − custo) por comprador no período de venda selecionado; respeita os filtros do topo. A rosquinha mostra só participações positivas.</div>
+    </div></div>`;
+  injectResumos('#gg-resumos');
+  // lucro por comprador — agrega os produtos filtrados
+  const by={};
+  P.forEach(p=>{ const nome=p.comprador||'Sem comprador'; by[nome]=(by[nome]||0)+(p.lucro||0); });
+  const arr=Object.entries(by).map(([nome,lucro])=>({nome,lucro})).sort((a,b)=>b.lucro-a.lucro);
+  const total=arr.reduce((s,x)=>s+x.lucro,0)||1;
+  const pos=arr.filter(x=>x.lucro>0);
+  const corDe=nome=>{ const i=pos.findIndex(p=>p.nome===nome); return i>=0?PAL_COMP[i%PAL_COMP.length]:C.dim; };
+  chart('ch-lucrocomp',{type:'doughnut',data:{labels:pos.map(x=>x.nome),datasets:[{data:pos.map(x=>x.lucro),backgroundColor:pos.map(x=>corDe(x.nome)),borderWidth:0}]},
+    options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>pos[c.dataIndex].nome+': '+money(c.raw)+' ('+dec(c.raw/total*100,1)+'%)'}}},cutout:'62%'}});
+  $('#gg-lucrotab').innerHTML=arr.map(x=>`<tr><td><span class="dot" style="background:${corDe(x.nome)}"></span> ${esc(x.nome)}</td><td class="num">${money(x.lucro)}</td><td class="num">${dec(x.lucro/total*100,1)}%</td></tr>`).join('')||'<tr><td class="muted">Sem lucro no filtro</td></tr>';
+}
+
 const OCUP_BADGE={baixa:['Baixa ocupação','#f97316'],media:['Ocupação média','#eab308'],ok:['OK','#22c55e'],sem_cubagem:['Sem cubagem','#64748b']};
 const ocupBadge=v=>{const s=OCUP_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
 
@@ -1020,7 +1040,7 @@ function render(){
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
   const P=filtered();
-  ({cockpit:renderCockpit,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
+  ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; const fa=$('#f-abast'); if(fa) fa.value=S.cli.abast; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
