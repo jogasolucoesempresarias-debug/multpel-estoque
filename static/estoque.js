@@ -14,7 +14,7 @@ const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''},
+  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
 };
@@ -44,6 +44,15 @@ const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
 // navegação em 2 níveis: grupo → telas
 const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
+// filtro Abast. multi-seleção (dropdown de checkboxes)
+const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
+function abastSet(arr){ // sincroniza checkboxes + rótulo do resumo a partir do estado
+  arr=arr||[];
+  const el=$('#f-abast'); if(!el) return;
+  el.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=arr.includes(c.value);});
+  const sum=$('#f-abast-sum');
+  if(sum) sum.textContent = !arr.length ? 'Todos' : (arr.length===1 ? (ABAST_LABELS[arr[0]]||arr[0]) : `${arr.length} status`);
+}
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
   const mx=Math.max(...serie,1), w=46,h=16, st=w/(serie.length-1||1);
@@ -97,7 +106,7 @@ function filtered(){
     if(f.xyz && p.xyz!==f.xyz) return false;
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
-    if(f.abast && p.status_abast!==f.abast) return false;
+    if(f.abast.length && !f.abast.includes(p.status_abast)) return false;
     if(f.parado && p.status_parado!==f.parado) return false;
     if(f.ruptura && !p.status_ruptura) return false;
     if(b && !(String(p.codprod).includes(b)||(p.descricao||'').toLowerCase().includes(b))) return false;
@@ -170,7 +179,7 @@ function exportQS(){
   if(f.xyz) p.set('xyz',f.xyz);
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
-  if(f.abast) p.set('abast',f.abast);
+  if(f.abast.length) p.set('abast',f.abast.join(','));
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
   if(f.cobFaixa) p.set('cob_faixa',f.cobFaixa);
@@ -1043,7 +1052,7 @@ function render(){
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast||''; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; const fa=$('#f-abast'); if(fa) fa.value=S.cli.abast; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; abastSet(S.cli.abast); if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -1092,14 +1101,18 @@ async function init(){
     render();
   };
   $('#f-depto').onchange=e=>{S.cli.depto=e.target.value;render();};
-  $('#f-abast').onchange=e=>{S.cli.abast=e.target.value;render();};
+  $('#f-abast').addEventListener('change',()=>{
+    S.cli.abast=[...$('#f-abast').querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);
+    abastSet(S.cli.abast); render();
+  });
+  document.addEventListener('click',e=>{ const d=$('#f-abast'); if(d&&d.open&&!d.contains(e.target)) d.open=false; });
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:'',parado:'',ruptura:''};
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:''};
     S.compradorNome='';
-    ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto','#f-abast'].forEach(s=>{const e=$(s);if(e)e.value='';});
-    $('#f-busca').value='';
+    ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
+    $('#f-busca').value=''; abastSet([]);
     render();
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
