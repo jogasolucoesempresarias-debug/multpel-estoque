@@ -384,6 +384,7 @@ def api_snapshot():
     return jsonify({
         "ok": True,
         "gerado_em": date.today().isoformat(),
+        "bi_refresh": pbi.get_dataset_refresh(),
         "filiais": filiais or "ALL",
         "params": params,
         "n": len(produtos),

@@ -11,6 +11,7 @@ import time
 import threading
 import functools
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -168,3 +169,49 @@ def run_dax_paralelo(queries: dict, max_workers: int = 4) -> dict:
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {nome: ex.submit(_one, q) for nome, q in queries.items()}
         return {nome: f.result() for nome, f in futs.items()}
+
+
+# ───────────────────────── última atualização do dataset (refresh history) ─────────────────────────
+def _para_brasilia(iso_utc):
+    """'2026-07-06T09:24:30.147Z' (UTC) -> datetime em America/Sao_Paulo (ou None)."""
+    s = (iso_utc or "").replace("Z", "").split(".")[0]  # descarta fração de segundos
+    try:
+        dt = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+    except Exception:
+        return dt.astimezone(timezone(timedelta(hours=-3)))  # Brasil é UTC-3 o ano todo
+
+
+def get_dataset_refresh(dataset_id=None):
+    """Última atualização concluída do dataset via API REST do Power BI (refresh history).
+    Retorna {'end','end_fmt','in_progress'} ou None (degrada se a API não responder)."""
+    ds = dataset_id or CONFIG["dataset_id"]
+    key = f"pbi:refresh:{ds}"
+    hit = _CACHE.get(key)
+    if hit is not None:
+        return hit or None
+    out = None
+    try:
+        token = get_token()
+        url = (f"https://api.powerbi.com/v1.0/myorg/groups/{CONFIG['group_id']}"
+               f"/datasets/{ds}/refreshes?$top=10")
+        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        resp.raise_for_status()
+        rows = resp.json().get("value", [])
+        # refresh rodando agora: status não-final e sem endTime
+        in_progress = any(not r.get("endTime")
+                          and (r.get("status") or "").lower() in ("unknown", "inprogress", "notstarted")
+                          for r in rows)
+        last = next((r for r in rows if r.get("status") == "Completed" and r.get("endTime")), None)
+        dtloc = _para_brasilia(last["endTime"]) if last else None
+        if dtloc:
+            out = {"end": dtloc.isoformat(), "end_fmt": dtloc.strftime("%d/%m/%Y %H:%M"),
+                   "in_progress": in_progress}
+    except Exception as e:
+        print(f"[pbi] refresh history indisponível ({e}).")
+    _CACHE.set(key, out or False, 300)  # cache 5min; False = 'consultado, sem dado'
+    return out

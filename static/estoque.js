@@ -90,7 +90,10 @@ async function loadData(){
     const [snap,val,planos]=await Promise.all([
       getJSON('/api/snapshot?'+qs), getJSON('/api/validade?'+qs), getJSON('/api/planos').catch(()=>({planos:{}}))]);
     S.produtosAll=snap.produtos; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
-    $('#meta-gerado').textContent='Atualizado em '+snap.gerado_em;
+    const br=snap.bi_refresh;
+    $('#meta-gerado').textContent = (br&&br.end_fmt)
+      ? ('BI atualizado '+br.end_fmt+(br.in_progress?' · atualizando…':''))
+      : ('Atualizado em '+snap.gerado_em);
     $('#meta-filiais').textContent='filiais '+(Array.isArray(snap.filiais)?snap.filiais.join(','):snap.filiais)+' · '+snap.n+' itens · gerencial';
   }catch(e){ toast('Falha ao carregar: '+e.message,true); console.error(e); }
   $('#loader').style.display='none'; $('#content').style.display='block';
