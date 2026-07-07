@@ -198,9 +198,9 @@ td .prod { max-width: 320px; overflow: hidden; text-overflow: ellipsis; display:
 /* loading / empty */
 .loader { text-align: center; padding: 60px; color: var(--text-dim); }
 /* spinner = logo Multpel girando (usado em todos os "carregando" inline) */
-.spinner { width: 58px; height: 58px; margin: 0 auto 14px; border-radius: 50%;
+.spinner { width: 58px; height: 58px; margin: 0 auto 14px;
   background: url("/static/logo-multpel.png") center / contain no-repeat; animation: spin 1.3s linear infinite; }
-.loader-logo { width: 84px; height: 84px; display: block; margin: 0 auto 16px; border-radius: 50%; animation: spin 1.4s linear infinite; }
+.loader-logo { width: 84px; height: 84px; display: block; margin: 0 auto 16px; animation: spin 1.4s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .empty { text-align: center; padding: 40px; color: var(--text-mute); }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--red); color:#fff; padding: 11px 20px; border-radius: 9px; font-size: .82rem; z-index: 90; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
