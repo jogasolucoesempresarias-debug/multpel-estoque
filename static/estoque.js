@@ -14,7 +14,7 @@ const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:''},
+  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
 };
@@ -44,15 +44,11 @@ const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
 // navegação em 2 níveis: grupo → telas
 const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
-// filtro Abast. multi-seleção (dropdown de checkboxes)
+// filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
 const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
-function abastSet(arr){ // sincroniza checkboxes + rótulo do resumo a partir do estado
-  arr=arr||[];
-  const el=$('#f-abast'); if(!el) return;
-  el.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=arr.includes(c.value);});
-  const sum=$('#f-abast-sum');
-  if(sum) sum.textContent = !arr.length ? 'Todos' : (arr.length===1 ? (ABAST_LABELS[arr[0]]||arr[0]) : `${arr.length} status`);
-}
+const abastLabel=arr=>!arr.length?'Todos':(arr.length===1?(ABAST_LABELS[arr[0]]||arr[0]):`${arr.length} status`);
+// valor em "N cx · M un" (só unidades quando não há caixa ou ≤0) — colunas de estoque em caixa
+const cxUn=(v,caixa)=>{ if(v==null) return '—'; const c=caixa||1; return (c>1&&v>0)?`${int(Math.round(v/c))} cx · ${int(v)} un`:int(v); };
 function spark(serie){ // mini sparkline SVG de 3 meses
   if(!serie||!serie.length) return '';
   const mx=Math.max(...serie,1), w=46,h=16, st=w/(serie.length-1||1);
@@ -109,7 +105,6 @@ function filtered(){
     if(f.xyz && p.xyz!==f.xyz) return false;
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
-    if(f.abast.length && !f.abast.includes(p.status_abast)) return false;
     if(f.parado && p.status_parado!==f.parado) return false;
     if(f.ruptura && !p.status_ruptura) return false;
     if(b && !(String(p.codprod).includes(b)||(p.descricao||'').toLowerCase().includes(b))) return false;
@@ -182,7 +177,8 @@ function exportQS(){
   if(f.xyz) p.set('xyz',f.xyz);
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
-  if(f.abast.length) p.set('abast',f.abast.join(','));
+  if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
+  if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
   if(f.cobFaixa) p.set('cob_faixa',f.cobFaixa);
@@ -311,9 +307,9 @@ function renderEstoqueZero(P){
   const custoRepor=comGiro.reduce((s,p)=>s+(p.sugestao_compra||0)*(p.custo_unit||0),0);
   const cols=[colCod,colProd,colForn,
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
-    {key:'qtdisp',label:'Estoque',num:true,fmt:int},
-    {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
-    colGiroSpark,
+    {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
+    {key:'qtd_ja_pedida',label:'Já ped.',num:true,html:p=>p.qtd_ja_pedida>0?cxUn(p.qtd_ja_pedida,p.caixa):'—'},
+    {key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${cxUn(p.giro_mes,p.caixa)} ${spark(p.serie_giro)}`},
     {key:'sugestao_cx',label:'Sugerido (cx)',num:true,html:p=>sugCxN(p)},
     {key:'status_exec',label:'Status',html:p=>statExec(p.status_exec)}];
   const statuses=[...new Set(z.map(p=>p.status_exec))];
@@ -451,8 +447,8 @@ function renderValidade(){
   const barCols=baseCols.map((c,i)=>(!S.valFaixa||S.valFaixa[2]===faixas[i][0])?c:'rgba(100,116,139,.28)');
   const cards=fd.map((f,i)=>`<div class="vfx ${S.valFaixa&&S.valFaixa[2]===f.n?'on':''}" data-i="${i}" style="--c:${baseCols[i]}">
       <div class="vfx-h">${f.n} dias</div>
-      <div class="vfx-v">${money(f.bruto)}</div>
-      <div class="vfx-s">risco ${moneyK(f.valor)} · ${int(f.qt)} lotes</div></div>`).join('');
+      <div class="vfx-v">${money(f.valor)}</div>
+      <div class="vfx-s">risco · ${int(f.qt)} lotes · estoque ${moneyK(f.bruto)}</div></div>`).join('');
   // vencimento por comprador (respeita a faixa selecionada) — clicável p/ filtrar
   const compMap={}; (S.produtosAll||[]).forEach(p=>{if(p.comprador&&p.codcomprador!=null)compMap[p.comprador]=p.codcomprador;});
   const cg={}; Lf.forEach(l=>{const nome=l.comprador||'Sem comprador';const g=cg[nome]=cg[nome]||{nome,bruto:0,risco:0,n:0};
@@ -471,7 +467,14 @@ function renderValidade(){
           <div class="grow">${compTbl}</div>
         </div></div>
       <div class="panel" id="val-tbl"></div>`;
-  $('#val-tbl').innerHTML=(S.valFaixa?`<div class="count-line">Filtrando faixa <b>${S.valFaixa[2]} dias</b> · <a href="#" id="val-clear">limpar</a></div>`:'')+renderTableInline(Lf,cols,'validade');
+  const Ld=S.cli.valDias?Lf.filter(l=>l.dias_para_vencer<=S.cli.valDias):Lf;
+  $('#val-tbl').innerHTML=
+    `<div class="row" style="gap:14px;margin:0 0 8px;align-items:flex-end">
+       <div class="fb-group"><label>Dias para vencer (≤)</label><input type="number" id="val-dias" value="${S.cli.valDias||''}" min="0" step="5" placeholder="todos" style="width:120px"></div>
+       ${S.valFaixa?`<div class="count-line" style="margin:0">Filtrando faixa <b>${S.valFaixa[2]} dias</b> · <a href="#" id="val-clear">limpar</a></div>`:''}
+     </div>`
+    +renderTableInline(Ld,cols,'validade');
+  const vd=$('#val-dias'); if(vd) vd.onchange=e=>{ S.cli.valDias=e.target.value!==''?Math.max(0,+e.target.value):''; render(); };
   if(S.valFaixa){const c=$('#val-clear'); if(c)c.onclick=e=>{e.preventDefault();S.valFaixa=null;render();};}
   el.querySelectorAll('.vfx').forEach(d=>d.onclick=()=>{const i=+d.dataset.i,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();});
   el.querySelectorAll('tr[data-comp]').forEach(tr=>{const cod=tr.dataset.comp; if(!cod)return;
@@ -642,13 +645,23 @@ function renderProdutos(P){
   P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):(p.giro_mes||0); p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):(p.qtdisp||0);});
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'xyz',label:'XYZ',badge:true},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'qtbloq',label:'Avaria',num:true,fmt:v=>v?int(v):'—'},
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'venda',label:'Venda',num:true,fmt:money},{key:'lucro',label:'Lucro',num:true,fmt:money},
     {key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
-  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+renderTable(P,cols,'produtos');
+  // filtro Abast. LOCAL desta aba (multi-seleção) — não afeta as outras abas
+  const abn=S.cli.abast||[];
+  const rows=abn.length?P.filter(p=>abn.includes(p.status_abast)):P;
+  const abastCtl=`<div class="fb-group" style="margin:0 0 8px"><label>Abastecimento</label>
+      <details class="ms" id="pr-abast"><summary class="fb-control">${abastLabel(abn)}</summary>
+        <div class="ms-menu">${Object.entries(ABAST_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${abn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
+      </details></div>`;
+  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+abastCtl+renderTable(rows,cols,'produtos');
+  const d=$('#pr-abast');
+  if(d) d.addEventListener('change',()=>{ S.cli.abast=[...d.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
 }
 
 const STAT_LUCRO={alta:['Alta entrega',C.green],boa:['Boa entrega',C.accent],baixa:['Entrega baixa',C.dim],negativo:['Lucro negativo',C.red]};
@@ -1061,7 +1074,7 @@ function render(){
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; abastSet(S.cli.abast); if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -1110,18 +1123,14 @@ async function init(){
     render();
   };
   $('#f-depto').onchange=e=>{S.cli.depto=e.target.value;render();};
-  $('#f-abast').addEventListener('change',()=>{
-    S.cli.abast=[...$('#f-abast').querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);
-    abastSet(S.cli.abast); render();
-  });
-  document.addEventListener('click',e=>{ const d=$('#f-abast'); if(d&&d.open&&!d.contains(e.target)) d.open=false; });
+  document.addEventListener('click',e=>{ document.querySelectorAll('details.ms[open]').forEach(d=>{ if(!d.contains(e.target)) d.open=false; }); });
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:''};
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:''};
     S.compradorNome='';
     ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
-    $('#f-busca').value=''; abastSet([]);
+    $('#f-busca').value='';
     render();
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};

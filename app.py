@@ -495,7 +495,7 @@ def api_plano_reposicao():
 # ───────────────────────── export CSV ─────────────────────────
 _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
-                 "qtdisp", "giro_mes", "cobertura", "dias_sem_venda",
+                 "qtdisp", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
                  "valor", "venda", "lucro", "margem", "status_abast", "status_parado"],
     "comprasvendas": ["codprod", "descricao", "fornecedor", "comprador", "valor", "venda",
                       "lucro", "margem", "giro_mes", "cobertura", "dias_sem_venda"],
@@ -566,6 +566,12 @@ def _export_data(view):
         cods = {p["codprod"] for p in _aplicar_filtros_cliente(produtos)}
         lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=int(params["horizonte_val"])), filiais))
         linhas = [l for l in core.validade_fefo(lotes, idx, params, hoje=hoje) if l["codprod"] in cods]
+        _vd = request.args.get("val_dias")
+        if _vd:
+            try:
+                linhas = [l for l in linhas if l["dias_para_vencer"] <= int(_vd)]
+            except ValueError:
+                pass
         cols = ["codprod", "descricao", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
