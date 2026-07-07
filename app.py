@@ -273,11 +273,13 @@ def _desempenho_data(periodo, hoje):
     res = {"resumo": {}, "compradores": []}
     try:
         receita = pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim))
-        devol = {}
+        devol, custo_dev = {}, {}
         for r in pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim)):
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
-                devol[int(core._n(cc))] = core._n(r.get("dev"))
+                k = int(core._n(cc))
+                devol[k] = core._n(r.get("dev"))
+                custo_dev[k] = core._n(r.get("cdev"))
         # mesmo período no ano anterior (comparativo YoY de venda E lucro por comprador)
         ini_ant = ini.replace(year=ini.year - 1)
         fim_ant = fim.replace(year=fim.year - 1)
@@ -287,7 +289,8 @@ def _desempenho_data(periodo, hoje):
             if cc not in (None, ""):
                 venda_ant[int(core._n(cc))] = core._n(r.get("venda"))
                 custo_ant[int(core._n(cc))] = core._n(r.get("custo"))
-        res = core.desempenho_comprador(receita, devol, _compradores_map(), venda_ant, custo_ant)
+        res = core.desempenho_comprador(receita, devol, _compradores_map(), venda_ant, custo_ant,
+                                        custo_dev)
     except Exception as e:
         print(f"[desempenho] RCA indisponível ({e}). Aba de desempenho desabilitada.")
         res = {"resumo": {}, "compradores": []}

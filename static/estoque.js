@@ -657,9 +657,15 @@ async function renderDesempenho(){
   el.innerHTML=`<div class="loader"><div class="spinner"></div>Carregando desempenho comercial…</div>`;
   let j; try{ j=await getJSON('/api/desempenho?venda_periodo='+encodeURIComponent(S.vperiodo)); }
   catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar desempenho: ${esc(e.message)}</div>`; return; }
-  const r=j.resumo||{}; let rows=j.compradores||[];
+  let rows=j.compradores||[];
   // filtro de comprador do topo
   if(S.cli.comprador) rows=rows.filter(p=>String(p.codcomprador)===S.cli.comprador);
+  // resumo (cards) recalculado a partir das linhas visíveis → respeita o filtro de comprador.
+  // Sem filtro, bate igual ao resumo do servidor (soma das mesmas linhas).
+  const _sum=k=>rows.reduce((a,p)=>a+(+p[k]||0),0);
+  const _tv=_sum('venda_liquida'), _tl=_sum('lucro_bruto');
+  const r={ venda_liquida:_tv, lucro_bruto:_tl, margem:_tv?(_tl/_tv*100):null,
+            clientes_pos:_sum('clientes_pos'), devolucao:_sum('devolucao') };
   const perLbl=({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período';
   const ck=[{k:'ranking',label:'#',num:1},{k:'comprador',label:'Comprador'},{k:'fornecedores',label:'Fornec.',num:1},
     {k:'clientes_pos',label:'Positivação',num:1},{k:'venda_liquida',label:'Venda líq.',num:1},{k:'lucro_bruto',label:'Lucro bruto',num:1},

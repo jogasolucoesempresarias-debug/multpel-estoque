@@ -214,14 +214,16 @@ FILTER(
 
 
 def q_devol_comprador_rca(data_ini, data_fim):
-    """Devolução (valor) por CODCOMPRADOR no período (DTENT) — p/ a venda líquida do comprador."""
+    """Devolução (valor + custo) por CODCOMPRADOR no período (DTENT). O valor entra na
+    venda líquida; o custo (cdev) é devolvido ao lucro (RCA: lucro = líq − (custo − cdev))."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_DEVOLUCAO[CODCOMPRADOR],
         FILTER(FATURAMENTO_DEVOLUCAO,
             FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}),
-        "dev",  [TOTAL DEVOLUCAO]
+        "dev",  [TOTAL DEVOLUCAO],
+        "cdev", [CUSTO TOTAL DEVOLUCAO]
     ),
     [dev] <> 0
 )"""

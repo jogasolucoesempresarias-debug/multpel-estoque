@@ -708,13 +708,16 @@ def ruptura_por_comprador(produtos):
 
 
 # ───────────────────────── desempenho comercial por comprador (RCA) ─────────────────────────
-def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, custo_ant_map=None):
+def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, custo_ant_map=None,
+                         custo_dev_map=None):
     """Espelha a aba RECEITA COMPRADOR: venda líquida, lucro bruto, margem ponderada,
     positivação (clientes distintos), devolução e comparativo ano×ano (venda E lucro) por comprador.
     receita_rows: [{CODCOMPRADOR, venda, custo, qtd, clientes_pos, fornecedores}];
-    devol_map: {codcomprador: valor_devolvido}; venda_ant_map/custo_ant_map: {cc: valor} do ano ant."""
+    devol_map: {codcomprador: valor_devolvido}; custo_dev_map: {cc: custo_da_devolução} (RCA);
+    venda_ant_map/custo_ant_map: {cc: valor} do ano ant."""
     venda_ant_map = venda_ant_map or {}
     custo_ant_map = custo_ant_map or {}
+    custo_dev_map = custo_dev_map or {}
     linhas = []
     for r in receita_rows:
         cc = int(_n(r.get("CODCOMPRADOR"))) if r.get("CODCOMPRADOR") not in (None, "") else None
@@ -723,8 +726,11 @@ def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, 
         venda_bruta = _n(r.get("venda"))
         custo = _n(r.get("custo"))
         dev = _n(devol_map.get(cc))
+        cdev = _n(custo_dev_map.get(cc))
         venda_liq = venda_bruta - dev
-        lucro = venda_liq - custo
+        # Alinhamento RCA: a devolução tira o valor de venda da receita E devolve o
+        # custo da mercadoria devolvida ao lucro (senão o custo é contado em dobro).
+        lucro = venda_liq - (custo - cdev)
         margem = (lucro / venda_liq) if venda_liq else None
         venda_ant = _n(venda_ant_map.get(cc))
         yoy = ((venda_bruta - venda_ant) / venda_ant) if venda_ant > 0 else None
