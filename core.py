@@ -235,12 +235,14 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         qt_end     = _n(end_map.get(cod))
 
         # QTDISP conforme a base escolhida
-        # gerencial = QTESTGER cru (oficial v3 — bate com a planilha do diretor; NÃO subtrai
-        # reserva/bloqueio). endereco = estoque WMS endereçado (usado só na validade/FEFO).
+        # gerencial = DISPONÍVEL = QTESTGER − avaria (QTBLOQUEADA) − reserva (QTRESERV): itens em
+        # avaria ou reservados não estão disponíveis p/ venda (decisão do diretor 2026-07;
+        # substitui o "QTESTGER cru" anterior). Ex.: item 44094 = 86 − 81 − 5 = 0.
+        # endereco = estoque WMS endereçado (usado só na validade/FEFO).
         if base == "endereco":
             qtdisp = qt_end
-        else:  # gerencial (default v3)
-            qtdisp = qtestger
+        else:  # gerencial (default v3) — desconta avaria e reserva
+            qtdisp = qtestger - qtbloq - qtreserv
         # valor financeiro com piso em zero: estoque negativo é erro de saldo, não vale R$ negativo
         # (alinha o total ao BASE PRODUTOS; mantém qtdisp negativo visível na tela)
         valor = max(0.0, qtdisp) * custofin
