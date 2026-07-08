@@ -252,12 +252,16 @@ function renderRuptura(P){
   // distribuição da cobertura sobre a base inteira (igual à planilha), com valor por faixa
   const faixas=FX_COB.map(f=>{const it=P.filter(p=>p.cobertura_faixa===f.key);
     return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
+  // colunas em caixa (mesmo padrão da aba Produtos): mantém unidade e ACRESCENTA cx
+  P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):null; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
   const cols=[colCod,colProd,colForn,{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},
+    {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'valor',label:'Valor estoque',num:true,fmt:money},
     {key:'cobertura_dias',label:'Cob.',num:true,fmt:cobDiasFmt},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
-    colGiroSpark,{key:'sugestao_compra',label:'Sugerido',num:true,fmt:int},
+    colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'sugestao_cx',label:'Sugerido',num:true,html:p=>sugCxN(p)},
     {key:'cobertura_faixa',label:'Faixa',badge:true}];
   // no 121+ mostra a natureza (sem giro × excesso real) — separa estoque morto de excesso de compra
   const is121=S.cli.cobFaixa==='121+';
