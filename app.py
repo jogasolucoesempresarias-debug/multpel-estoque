@@ -409,7 +409,9 @@ def api_filtros():
         "ok": True,
         "filiais": _filiais_disponiveis(),
         "filiais_padrao": list(Q.FILIAIS_PADRAO),
-        "unidades": [{"id": uid, "nome": u["nome"]} for uid, u in UNIDADES.items()],
+        "unidades": [{"id": uid, "nome": u["nome"],
+                      "cod": "" if uid == "todas" else ",".join(sorted(set(u["estoque"] + u["venda"]), key=int))}
+                     for uid, u in UNIDADES.items()],
         "unidade_padrao": UNIDADE_PADRAO,
         "nomes_filial": NOMES_FILIAL,
         "deptos": deptos,

@@ -381,13 +381,19 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         qtunitcx = _n(cad.get("QTUNITCX"))
         # caixa oficial v3 = QTUNIT do PCEMBALAGEM; fallback no QTUNITCX do cadastro
         caixa = qtunit_emb if qtunit_emb > 1 else qtunitcx
-        # sugestão sempre disponível em CAIXAS (arredondada p/ cima) — metodologia v3
+        # sugestão em CAIXAS quando há fator (>1); SEM fator (=1, cadastro incompleto) fica em
+        # UNIDADES — não força "1 cx". Normaliza sozinho quando o TI cadastrar o QTUNIT no Winthor.
         sugestao_bruta = sugestao
-        sugestao_cx = math.ceil(sugestao / caixa) if (caixa > 1 and sugestao > 0) else (1 if sugestao > 0 else 0)
+        if sugestao <= 0:
+            sugestao_cx = 0
+        elif caixa > 1:
+            sugestao_cx = math.ceil(sugestao / caixa)   # caixas fechadas
+        else:
+            sugestao_cx = math.ceil(sugestao)           # sem fator: unidades (o front mostra "un")
         if arred_cx and caixa > 1 and sugestao > 0:
             sugestao = sugestao_cx * caixa  # sugestão em unidades, arredondada p/ caixa fechada
-        # valor da compra líquida sugerida (sobre caixa fechada × custo)
-        valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao * custofin)
+        # valor da compra líquida sugerida (caixa fechada × custo, ou unidades × custo se sem fator)
+        valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao_cx * custofin)
 
         # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
         tem_compra = sugestao_cx > 0

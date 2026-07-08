@@ -38,7 +38,8 @@ const badge = (v,txt) => v==null||v===''?'':`<span class="badge b-${String(v).re
 const STAT_EXEC={ruptura_sem_pedido:['Ruptura s/ pedido','#ef4444'],ruptura_pedido_parcial:['Ruptura · pedido parcial','#f97316'],ruptura_pedido_cobre:['Ruptura · pedido cobre','#eab308'],compra_urgente:['Compra urgente','#ef4444'],compra_alta:['No prazo','#eab308'],compra_complementar:['Compra complementar','#38bdf8'],programar_compra:['Programar compra','#a78bfa'],pedido_cobre:['Pedido cobre','#22c55e'],estoque_ok:['Estoque OK','#22c55e']};
 const statExec = v => { const s=STAT_EXEC[v]; return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—'; };
 // sugestão em caixas a partir do campo já calculado no servidor (sugestao_cx) + unidades
-const sugCxN = p => (p.sugestao_cx>0 ? `${int(p.sugestao_cx)} cx${p.caixa>1?` · ${int((p.sugestao_cx||0)*(p.caixa||1))} un`:''}` : '—');
+const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
+  return (p.caixa>1) ? `${int(p.sugestao_cx)} cx · ${int(p.sugestao_cx*p.caixa)} un` : `${int(p.sugestao_cx)} un`; };
 // embalagem do produto (caixa do PCEMBALAGEM) + fator un/cx — p/ validar a conversão unid→caixa
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
@@ -1093,7 +1094,7 @@ async function init(){
     // seletor de Unidade de negócio (escopa estoque + venda)
     const unids=f.unidades||[{id:'atacado',nome:'Atacado'}];
     if(!unids.some(u=>u.id===S.unidade)) S.unidade=f.unidade_padrao||'atacado';
-    $('#f-unidade').innerHTML=unids.map(u=>`<option value="${u.id}" ${u.id===S.unidade?'selected':''}>${esc(u.nome)}</option>`).join('');
+    $('#f-unidade').innerHTML=unids.map(u=>`<option value="${u.id}" ${u.id===S.unidade?'selected':''}>${u.cod?esc(u.cod)+' - ':''}${esc(u.nome)}</option>`).join('');
     S.fornecedores=f.fornecedores||[];
     $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${o.codfornec} · ${esc(o.fornecedor)}">`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
