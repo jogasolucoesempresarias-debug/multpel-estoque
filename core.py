@@ -957,15 +957,17 @@ def resumo_cobertura(produtos):
 
 def resumo_ruptura(produtos):
     """Bloco 'Ruptura de produtos' (RELATORIO GERENCIAL). Critério oficial do diretor:
-    estoque ≤ 0 e giro mensal > 0. % sobre o universo construído (revenda com posição)."""
+    estoque ≤ 0 e giro mensal > 0. % sobre o universo construído (revenda com posição).
+    venda_perdida = giro_mes × custo dos itens em ruptura (o "valor" da ruptura — o antigo
+    "valor de estoque" era sempre ~0, pois item em ruptura tem estoque ≤ 0)."""
     total = len(produtos)
-    itens = sum(1 for p in produtos if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0)
+    rup = [p for p in produtos if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0]
     return {
-        "itens": itens,
+        "itens": len(rup),
         "total": total,
-        "perc": _round(itens / total, 4) if total else 0,
-        "valor": _round(sum(p.get("valor") or 0 for p in produtos
-                            if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0)),
+        "perc": _round(len(rup) / total, 4) if total else 0,
+        "venda_perdida": _round(sum((p.get("giro_mes") or 0) * (p.get("custo_unit") or 0) for p in rup)),
+        "valor": _round(sum(p.get("valor") or 0 for p in rup)),  # mantido p/ compat (≈0)
         "criterio": "ESTOQUE <= 0 E GIRO MENSAL > 0",
     }
 

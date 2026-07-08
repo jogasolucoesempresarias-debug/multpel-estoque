@@ -823,7 +823,7 @@ async function injectResumos(sel){
     ['Itens em ruptura',int(rup.itens)],
     ['Total de produtos',int(rup.total)],
     ['% ruptura',rup.perc!=null?pct(rup.perc):'—'],
-    ['Valor em ruptura',money(rup.valor)],
+    ['Venda perdida/mês',money(rup.venda_perdida)],
     ['Critério',rup.criterio||'ESTOQUE ≤ 0 E GIRO > 0'],
   ],C.red);
   el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos</span></h2>
