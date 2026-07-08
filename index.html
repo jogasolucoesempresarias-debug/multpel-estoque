@@ -17,6 +17,10 @@
     <h1>Multpel <span>· Estoque</span></h1>
   </div>
   <div class="comprador-box">
+    <label>Unidade</label>
+    <select id="f-unidade" class="fb-control"></select>
+  </div>
+  <div class="comprador-box">
     <label>Comprador</label>
     <select id="f-comprador" class="fb-control"><option value="">Empresa toda</option></select>
   </div>
@@ -45,9 +49,6 @@
 </div>
 
 <div class="panel" id="params-panel" style="display:none; margin:12px 22px 0;">
-  <div class="row" style="margin-bottom:8px;border-bottom:1px solid var(--line,#1e293b);padding-bottom:10px">
-    <div class="fb-group"><label>Filiais</label><div class="chips" id="f-filiais"></div></div>
-  </div>
   <div class="row">
     <div class="fb-group"><label>Lead time (dias)</label><input type="number" id="p-lead" value="10" style="width:80px"></div>
     <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>

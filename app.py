@@ -130,6 +130,37 @@ def _filiais_key(filiais):
     return ",".join(sorted(filiais)) if filiais else "ALL"
 
 
+# ───────────────────────── unidades de negócio (estrutura da Multpel) ─────────────────────────
+# Estoque físico (PCEST) e Venda (RCA faturamento) vivem em filiais DIFERENTES por unidade.
+# Atacado: estoque nos CDs 3+5, mas fatura em 3+7+8 (5=depósito, 7/8=venda sem estoque).
+# Lojas (A&M/AC) e JID são autossuficientes. Filiais 1,2,6,10-13,15 excluídas; 8 sem estoque.
+NOMES_FILIAL = {"3": "Multpel Matriz", "4": "A&M", "5": "Deposito",
+                "7": "Telemarketing", "8": "Atacado", "9": "JID", "14": "AC"}
+UNIDADES = {
+    "atacado": {"nome": "Atacado", "estoque": ["3", "5"],            "venda": ["3", "7", "8"]},
+    "am":      {"nome": "A&M",     "estoque": ["4"],                 "venda": ["4"]},
+    "ac":      {"nome": "AC",      "estoque": ["14"],                "venda": ["14"]},
+    "jid":     {"nome": "JID",     "estoque": ["9"],                 "venda": ["9"]},
+    "todas":   {"nome": "Todas",   "estoque": ["3", "5", "4", "14", "9"], "venda": ["3", "7", "8", "4", "14", "9"]},
+}
+UNIDADE_PADRAO = "atacado"
+
+
+def _unidade():
+    u = (request.args.get("unidade") or UNIDADE_PADRAO).lower()
+    return u if u in UNIDADES else UNIDADE_PADRAO
+
+
+def _filiais_estoque():
+    """Filiais de ESTOQUE físico (PCEST) da unidade atual."""
+    return list(UNIDADES[_unidade()]["estoque"])
+
+
+def _filiais_venda():
+    """Filiais de VENDA/faturamento (RCA) da unidade atual."""
+    return list(UNIDADES[_unidade()]["venda"])
+
+
 def _snapshot_rows(filiais):
     key = f"snap:{_filiais_key(filiais)}"
     hit = pbi._CACHE.get(key)
@@ -209,23 +240,24 @@ def _venda_datas(periodo, hoje):
     return hoje.replace(day=1), hoje  # mês atual (default)
 
 
-def _vendas_map(periodo, hoje):
-    """{cod: {venda, custo, qtd}} líquido (venda − devoluções) do RCA. Degrada se RCA indisponível."""
+def _vendas_map(periodo, hoje, filiais=None):
+    """{cod: {venda, custo, qtd}} líquido (venda − devoluções) do RCA, escopado por filiais de
+    VENDA da unidade. Degrada se RCA indisponível."""
     ini, fim = _venda_datas(periodo, hoje)
-    key = f"venda:{periodo}:{ini}:{fim}"
+    key = f"venda:{periodo}:{_filiais_key(filiais)}:{ini}:{fim}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
     m = {}
     try:
-        for r in pbi.run_dax_rca(Q.q_vendas_rca(ini, fim)):
+        for r in pbi.run_dax_rca(Q.q_vendas_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             m[c] = {"venda": core._n(r.get("venda")), "custo": core._n(r.get("custo")), "qtd": core._n(r.get("qtd"))}
-        for r in pbi.run_dax_rca(Q.q_devol_rca(ini, fim)):
+        for r in pbi.run_dax_rca(Q.q_devol_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             if c in m:
                 m[c]["venda"] -= core._n(r.get("dev")); m[c]["custo"] -= core._n(r.get("cdev"))
-        for r in pbi.run_dax_rca(Q.q_devol_av_rca(ini, fim)):
+        for r in pbi.run_dax_rca(Q.q_devol_av_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             if c in m:
                 m[c]["venda"] -= core._n(r.get("devav")); m[c]["custo"] -= core._n(r.get("cdevav"))
@@ -236,21 +268,21 @@ def _vendas_map(periodo, hoje):
     return m
 
 
-def _vendas_mensal_map(meses, hoje, profundo=False):
-    """{cod: {AnoMes: qtd}} — venda mensal (QT) do RCA p/ o forecast. Cache 12h.
-    Degrada p/ {} se RCA indisponível. Só chamada quando forecast está ligado.
+def _vendas_mensal_map(meses, hoje, profundo=False, filiais=None):
+    """{cod: {AnoMes: qtd}} — venda mensal (QT) do RCA p/ o forecast, escopada por filiais de
+    VENDA da unidade. Cache 12h. Degrada p/ {} se RCA indisponível. Só quando forecast ligado.
     profundo=True (sazonalidade) força ≥25 meses de histórico p/ o fator ano-a-ano."""
     fetch = max(25, int(meses)) if profundo else max(1, int(meses))
     ini = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)  # 1º dia do mês anterior
     for _ in range(fetch):
         ini = (ini - timedelta(days=1)).replace(day=1)
-    key = f"vmes:{fetch}:{hoje.strftime('%Y-%m')}"
+    key = f"vmes:{fetch}:{_filiais_key(filiais)}:{hoje.strftime('%Y-%m')}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
     m = {}
     try:
-        for r in pbi.run_dax_rca(Q.q_vendas_mensal_rca(ini)):
+        for r in pbi.run_dax_rca(Q.q_vendas_mensal_rca(ini, filiais)):
             c = int(core._n(r["CODPROD"]))
             am = int(core._n(r.get("AM")))
             if am:
@@ -262,19 +294,19 @@ def _vendas_mensal_map(meses, hoje, profundo=False):
     return m
 
 
-def _desempenho_data(periodo, hoje):
-    """{resumo, compradores} — desempenho comercial por comprador (RCA). Espelha RECEITA
-    COMPRADOR + comparativo ano×ano. Degrada p/ vazio se RCA indisponível. Cache 30min."""
+def _desempenho_data(periodo, hoje, filiais=None):
+    """{resumo, compradores} — desempenho comercial por comprador (RCA), escopado por filiais de
+    VENDA da unidade. Espelha RECEITA COMPRADOR + comparativo ano×ano. Cache 30min."""
     ini, fim = _venda_datas(periodo, hoje)
-    key = f"desemp:{periodo}:{ini}:{fim}"
+    key = f"desemp:{periodo}:{_filiais_key(filiais)}:{ini}:{fim}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
     res = {"resumo": {}, "compradores": []}
     try:
-        receita = pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim))
+        receita = pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim, filiais))
         devol, custo_dev = {}, {}
-        for r in pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim)):
+        for r in pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim, filiais)):
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 k = int(core._n(cc))
@@ -284,7 +316,7 @@ def _desempenho_data(periodo, hoje):
         ini_ant = ini.replace(year=ini.year - 1)
         fim_ant = fim.replace(year=fim.year - 1)
         venda_ant, custo_ant = {}, {}
-        for r in pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant)):
+        for r in pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant, filiais)):
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 venda_ant[int(core._n(cc))] = core._n(r.get("venda"))
@@ -298,15 +330,16 @@ def _desempenho_data(periodo, hoje):
     return res
 
 
-def _venda_comprador_30d(filiais, hoje):
-    """{nome_comprador: venda_liquida_30d} — base da meta de orçamento (65%). Usa caches."""
-    key = f"vcomp30:{_filiais_key(filiais)}:{hoje.isoformat()}"
+def _venda_comprador_30d(fil_estoque, fil_venda, hoje):
+    """{nome_comprador: venda_liquida_30d} — base da meta de orçamento (65%). Estoque e venda
+    escopados por filiais diferentes da unidade (ex.: Atacado = estoque 3+5, venda 3+7+8)."""
+    key = f"vcomp30:{_filiais_key(fil_estoque)}:{_filiais_key(fil_venda)}:{hoje.isoformat()}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
     produtos = core.construir_produtos(
-        _snapshot_rows(filiais), _endereco_map(filiais), _cadastro_produtos(),
-        _cadastro_fornecedores(), _compradores_map(), _vendas_map("30d", hoje),
+        _snapshot_rows(fil_estoque), _endereco_map(fil_estoque), _cadastro_produtos(),
+        _cadastro_fornecedores(), _compradores_map(), _vendas_map("30d", hoje, fil_venda),
         dict(core.DEFAULTS), hoje=hoje)
     m = {g["comprador"]: g["venda"] for g in core.por_comprador(produtos) if g.get("comprador")}
     pbi._CACHE.set(key, m, 1800)
@@ -314,23 +347,25 @@ def _venda_comprador_30d(filiais, hoje):
 
 
 def _build_produtos():
-    """Constrói a lista enriquecida de produtos para os filtros/params atuais."""
-    filiais = _filiais_param()
+    """Constrói a lista enriquecida de produtos para a unidade/params atuais.
+    Estoque (snapshot/endereço/pedido) usa as filiais de ESTOQUE; venda/forecast usam as de VENDA."""
+    filiais_e = _filiais_estoque()
+    filiais_v = _filiais_venda()
     params = core.merge_params(request.args.to_dict())
-    snap = _snapshot_rows(filiais)
-    end_map = _endereco_map(filiais)
+    snap = _snapshot_rows(filiais_e)
+    end_map = _endereco_map(filiais_e)
     prod_map = _cadastro_produtos()
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
-    venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje())
-    venda_mensal = (_vendas_mensal_map(params["forecast_meses"], _hoje(), profundo=bool(params.get("forecast_sazonal")))
+    venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
+    venda_mensal = (_vendas_mensal_map(params["forecast_meses"], _hoje(), profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
                     if params.get("forecast") else None)
-    ja_pedida = _pedidos_data(filiais, _hoje())["ja_pedida"]
+    ja_pedida = _pedidos_data(filiais_e, _hoje())["ja_pedida"]
     embalagem = _embalagem_map()
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem)
-    return produtos, params, filiais
+    return produtos, params, filiais_e
 
 
 # ───────────────────────── páginas ─────────────────────────
@@ -374,6 +409,9 @@ def api_filtros():
         "ok": True,
         "filiais": _filiais_disponiveis(),
         "filiais_padrao": list(Q.FILIAIS_PADRAO),
+        "unidades": [{"id": uid, "nome": u["nome"]} for uid, u in UNIDADES.items()],
+        "unidade_padrao": UNIDADE_PADRAO,
+        "nomes_filial": NOMES_FILIAL,
         "deptos": deptos,
         "fornecedores": fornecedores,
         "compradores": compradores,
@@ -389,6 +427,8 @@ def api_snapshot():
         "gerado_em": date.today().isoformat(),
         "bi_refresh": pbi.get_dataset_refresh(),
         "filiais": filiais or "ALL",
+        "unidade": _unidade(),
+        "unidade_nome": UNIDADES[_unidade()]["nome"],
         "params": params,
         "n": len(produtos),
         "produtos": produtos,
@@ -403,7 +443,7 @@ def api_desempenho():
     """Desempenho comercial por comprador: venda líquida, lucro, margem ponderada, positivação
     (clientes distintos), devolução e comparativo ano×ano. Período via ?venda_periodo=."""
     periodo = request.args.get("venda_periodo", "mes")
-    d = _desempenho_data(periodo, _hoje())
+    d = _desempenho_data(periodo, _hoje(), _filiais_venda())
     return jsonify({"ok": True, "periodo": periodo,
                     "resumo": d["resumo"], "compradores": d["compradores"]})
 
@@ -443,7 +483,7 @@ def api_resumos():
         cods = set(idx)
         lotes = [l for l in lotes if int(core._n(l.get("CODPROD"))) in cods]
     cab = _pedidos_data(filiais, hoje)["cab"]
-    venda_comp = _venda_comprador_30d(filiais, hoje)
+    venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
                                  _mes_atual(), comprador, pct=0.65, hoje=hoje, meta_override=None)
     return jsonify({
@@ -593,7 +633,7 @@ def _export_data(view):
         cols = ["codcomprador", "comprador", "n_produtos", "n_ruptura", "pct_ruptura",
                 "n_sem_pedido", "venda_perdida", "custo_reposicao"]
     elif view == "desempenho":
-        linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje())["compradores"]
+        linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje(), _filiais_venda())["compradores"]
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
                 "yoy", "yoy_lucro", "status_lucro"]
@@ -803,11 +843,11 @@ def api_orcamento():
     envio — não somam no realizado (evita dupla contagem quando voltarem do Winthor)."""
     mes = _mes_atual()
     comprador = request.args.get("comprador") or "TODOS"
-    filiais = _filiais_param()
+    filiais = _filiais_estoque()
     hoje = _hoje()
     pct = float(request.args.get("pct") or 0.65)
     cab = _pedidos_data(filiais, hoje)["cab"]
-    venda_comp = _venda_comprador_30d(filiais, hoje)
+    venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     # meta sempre automática (65% da venda líquida 30d por comprador) — sem override manual
     res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
                                  mes, comprador, pct=pct, hoje=hoje, meta_override=None)
@@ -820,7 +860,7 @@ def api_orcamento():
 def api_logistica():
     """Cubagem/ocupação por pedido em aberto (o que ainda vai chegar). Capacidade do veículo
     e limite de baixa ocupação são parâmetros (cap_m3, baixa_ate)."""
-    filiais = _filiais_param()
+    filiais = _filiais_estoque()
     hoje = _hoje()
     pdata = _pedidos_data(filiais, hoje)
     cap = float(request.args.get("cap_m3") or 60.0)

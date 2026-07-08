@@ -13,6 +13,7 @@ const PREF = 'multpel_estoque_prefs';
 const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
+  unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:''},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
@@ -61,13 +62,13 @@ async function getJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error('HT
 async function postJSON(u,body,method){ const r=await fetch(u,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
 
 /* ───────── prefs ───────── */
-function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,filiais:[...S.filiaisSel],params:S.params,view:S.view})); }catch(e){} }
+function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view})); }catch(e){} }
 function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(PREF))||{}; }catch(e){ return {}; } }
 
 /* ───────── querystring p/ servidor ───────── */
 function serverQS(){
-  const p=new URLSearchParams(), sel=[...S.filiaisSel];
-  if(sel.length && sel.length<S.filiaisAll.length) p.set('filiais', sel.join(','));
+  const p=new URLSearchParams();
+  p.set('unidade', S.unidade);
   p.set('base_estoque', S.base);
   p.set('venda_periodo', S.vperiodo);
   p.set('lead_time', S.params.lead); p.set('dias_seguranca', S.params.seg);
@@ -86,11 +87,13 @@ async function loadData(){
     const [snap,val,planos]=await Promise.all([
       getJSON('/api/snapshot?'+qs), getJSON('/api/validade?'+qs), getJSON('/api/planos').catch(()=>({planos:{}}))]);
     S.produtosAll=snap.produtos; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
+    if(snap.unidade_nome) S.unidadeNome=snap.unidade_nome;
     const br=snap.bi_refresh;
     $('#meta-gerado').textContent = (br&&br.end_fmt)
       ? ('BI atualizado '+br.end_fmt+(br.in_progress?' · atualizando…':''))
       : ('Atualizado em '+snap.gerado_em);
-    $('#meta-filiais').textContent='filiais '+(Array.isArray(snap.filiais)?snap.filiais.join(','):snap.filiais)+' · '+snap.n+' itens · gerencial';
+    const fnome=f=>S.nomesFilial[f]||f, fils=Array.isArray(snap.filiais)?snap.filiais.map(fnome).join(' + '):snap.filiais;
+    $('#meta-filiais').textContent=(snap.unidade_nome||'')+' · '+fils+' · '+snap.n+' itens · gerencial';
   }catch(e){ toast('Falha ao carregar: '+e.message,true); console.error(e); }
   $('#loader').style.display='none'; $('#content').style.display='block';
   render();
@@ -1080,15 +1083,17 @@ function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(
 async function init(){
   const pr=loadPrefs();
   if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};   // base fixa em gerencial (endereçado só p/ validade, que é isolada)
+  if(pr.unidade) S.unidade=pr.unidade;
   if(pr.view) S.view=pr.view;
   applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
   document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
   try{
     const f=await getJSON('/api/filtros');
-    S.filiaisAll=f.filiais;
-    const fsel=(pr.filiais&&pr.filiais.length)?pr.filiais:(f.filiais_padrao||f.filiais);
-    S.filiaisSel=new Set(fsel);
-    $('#f-filiais').innerHTML=f.filiais.map(x=>`<span class="chip ${S.filiaisSel.has(x)?'on':''}" data-f="${x}">${x}</span>`).join('');
+    S.filiaisAll=f.filiais; S.nomesFilial=f.nomes_filial||{};
+    // seletor de Unidade de negócio (escopa estoque + venda)
+    const unids=f.unidades||[{id:'atacado',nome:'Atacado'}];
+    if(!unids.some(u=>u.id===S.unidade)) S.unidade=f.unidade_padrao||'atacado';
+    $('#f-unidade').innerHTML=unids.map(u=>`<option value="${u.id}" ${u.id===S.unidade?'selected':''}>${esc(u.nome)}</option>`).join('');
     S.fornecedores=f.fornecedores||[];
     $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${o.codfornec} · ${esc(o.fornecedor)}">`).join('');
     $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
@@ -1107,7 +1112,7 @@ async function init(){
 
   // comprador → client filter + define visão inicial
   $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.value?(e.target.selectedOptions[0]?.textContent||''):''; render(); };
-  $('#f-filiais').querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const v=ch.dataset.f;ch.classList.toggle('on');ch.classList.contains('on')?S.filiaisSel.add(v):S.filiaisSel.delete(v); if(!S.filiaisSel.size){ch.classList.add('on');S.filiaisSel.add(v);return;} loadData();});
+  $('#f-unidade').onchange=e=>{S.unidade=e.target.value; S.cli.comprador=''; $('#f-comprador').value=''; S.compradorNome=''; loadData();};
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};
   $('#f-curva').onchange=e=>{S.cli.curva=e.target.value;render();};
   $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};

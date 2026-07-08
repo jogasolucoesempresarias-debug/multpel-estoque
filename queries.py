@@ -145,14 +145,28 @@ def _d(d):
     return f"DATE({d.year},{d.month},{d.day})"
 
 
-def q_vendas_rca(data_ini, data_fim):
+def _filiais_txt_dax(filiais):
+    """[3,7,8] -> '{"3", "7", "8"}' p/ FATURAMENTO_*[CODFILIAL] (TEXTO no RCA). Vazio/None -> None."""
+    if not filiais:
+        return None
+    itens = ", ".join(f'"{str(f).strip()}"' for f in filiais if str(f).strip())
+    return "{" + itens + "}" if itens else None
+
+
+def _fv_and(tab, filiais):
+    """Cláusula ' && TAB[CODFILIAL] IN {..}' (ou '' se sem filial) p/ escopar a venda por unidade."""
+    lst = _filiais_txt_dax(filiais)
+    return f" && {tab}[CODFILIAL] IN {lst}" if lst else ""
+
+
+def q_vendas_rca(data_ini, data_fim, filiais=None):
     """Venda bruta + custo + qtd por CODPROD no período (DTSAIDA). Usa as medidas do RCA."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODPROD],
         FILTER(FATURAMENTO_VENDAS,
-            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "venda", [VENDA BRUTA],
         "custo", [CUSTO TOTAL],
         "qtd",   SUM(FATURAMENTO_VENDAS[QT])
@@ -161,14 +175,14 @@ FILTER(
 )"""
 
 
-def q_devol_rca(data_ini, data_fim):
+def q_devol_rca(data_ini, data_fim, filiais=None):
     """Devolução (valor+custo) por CODPROD no período (DTENT) — alinha receita líquida do RCA."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_DEVOLUCAO[CODPROD],
         FILTER(FATURAMENTO_DEVOLUCAO,
-            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}),
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
         "dev",  [TOTAL DEVOLUCAO],
         "cdev", [CUSTO TOTAL DEVOLUCAO]
     ),
@@ -176,13 +190,13 @@ FILTER(
 )"""
 
 
-def q_vendas_mensal_rca(data_ini):
+def q_vendas_mensal_rca(data_ini, filiais=None):
     """Venda (QT) por CODPROD × mês (AnoMes YYYYMM) desde data_ini. Base do forecast.
     GROUPBY autossuficiente (não depende de relacionamento com CALENDARIO)."""
     return f"""EVALUATE
 VAR base =
     ADDCOLUMNS(
-        FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}),
+        FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "AM", YEAR(FATURAMENTO_VENDAS[DTSAIDA]) * 100 + MONTH(FATURAMENTO_VENDAS[DTSAIDA])
     )
 RETURN
@@ -194,7 +208,7 @@ GROUPBY(
 
 
 # ───── Desempenho comercial por COMPRADOR (espelha aba RECEITA COMPRADOR) ─────
-def q_receita_comprador_rca(data_ini, data_fim):
+def q_receita_comprador_rca(data_ini, data_fim, filiais=None):
     """Venda bruta + custo + qtd + positivação (clientes distintos) + nº fornecedores,
     agrupado por CODCOMPRADOR no período (DTSAIDA). CODCOMPRADOR está no próprio fato."""
     return f"""EVALUATE
@@ -202,7 +216,7 @@ FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODCOMPRADOR],
         FILTER(FATURAMENTO_VENDAS,
-            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "venda",        [VENDA BRUTA],
         "custo",        [CUSTO TOTAL],
         "qtd",          SUM(FATURAMENTO_VENDAS[QT]),
@@ -213,7 +227,7 @@ FILTER(
 )"""
 
 
-def q_devol_comprador_rca(data_ini, data_fim):
+def q_devol_comprador_rca(data_ini, data_fim, filiais=None):
     """Devolução (valor + custo) por CODCOMPRADOR no período (DTENT). O valor entra na
     venda líquida; o custo (cdev) é devolvido ao lucro (RCA: lucro = líq − (custo − cdev))."""
     return f"""EVALUATE
@@ -221,7 +235,7 @@ FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_DEVOLUCAO[CODCOMPRADOR],
         FILTER(FATURAMENTO_DEVOLUCAO,
-            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}),
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
         "dev",  [TOTAL DEVOLUCAO],
         "cdev", [CUSTO TOTAL DEVOLUCAO]
     ),
@@ -229,14 +243,14 @@ FILTER(
 )"""
 
 
-def q_venda_comprador_periodo_rca(data_ini, data_fim):
+def q_venda_comprador_periodo_rca(data_ini, data_fim, filiais=None):
     """Venda bruta + custo por CODCOMPRADOR num período (p/ comparativo ano×ano de venda E lucro)."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODCOMPRADOR],
         FILTER(FATURAMENTO_VENDAS,
-            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}),
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "venda", [VENDA BRUTA],
         "custo", [CUSTO TOTAL]
     ),
@@ -244,14 +258,14 @@ FILTER(
 )"""
 
 
-def q_devol_av_rca(data_ini, data_fim):
+def q_devol_av_rca(data_ini, data_fim, filiais=None):
     """Devolução avulsa (valor+custo) por CODPROD no período (DTENT)."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
         FATURAMENTO_DEVOLUCAO_AVULSA[CODPROD],
         FILTER(FATURAMENTO_DEVOLUCAO_AVULSA,
-            FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] <= {_d(data_fim)}),
+            FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO_AVULSA', filiais)}),
         "devav",  [TOTAL DEVOLUCAO AVULSA],
         "cdevav", [CUSTO TOTAL DEVOLUCAO AVULSA]
     ),
