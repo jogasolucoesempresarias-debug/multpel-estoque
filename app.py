@@ -615,6 +615,14 @@ def _export_data(view):
                 linhas = [l for l in linhas if l["dias_para_vencer"] <= int(_vd)]
             except ValueError:
                 pass
+        # faixa de validade clicada no gráfico/cards (mesmo range da tela) — senão o export sai com tudo
+        _flo, _fhi = request.args.get("val_faixa_lo"), request.args.get("val_faixa_hi")
+        if _flo and _fhi:
+            try:
+                lo_i, hi_i = int(float(_flo)), int(float(_fhi))
+                linhas = [l for l in linhas if lo_i <= l["dias_para_vencer"] <= hi_i]
+            except ValueError:
+                pass
         cols = ["codprod", "descricao", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":

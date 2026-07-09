@@ -183,6 +183,7 @@ function exportQS(){
   if(f.depto) p.set('depto',f.depto);
   if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
   if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
+  if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
   if(f.cobFaixa) p.set('cob_faixa',f.cobFaixa);
