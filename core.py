@@ -287,9 +287,12 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         codcomprador = int(_n((forn or {}).get("CODCOMPRADOR"))) if forn and (forn.get("CODCOMPRADOR") not in (None, "")) else None
         comprador = comprador_map.get(codcomprador) if codcomprador is not None else None
 
-        # reposição / ROP — lead time real do fornecedor quando houver
-        prazo_forn = _n((forn or {}).get("PRAZOENTREGA"))
-        lead = prazo_forn if prazo_forn > 0 else params["lead_time"]
+        # lead time do abastecimento = parâmetro da tela (o comprador controla manual;
+        # decisão 07/2026). Antes priorizava o PRAZOENTREGA do fornecedor, mas mexer no
+        # slider não afetava quem já tinha prazo cadastrado (~95% dos itens) e parecia
+        # "não funcionar" — agora o slider vale p/ todos. (A previsão de ENTREGA do
+        # orçamento segue usando o prazo real do fornecedor; é outra finalidade.)
+        lead = params["lead_time"]
         est_seg = giro_dia * params["dias_seguranca"]
         rop = giro_dia * lead + est_seg
         # alvo medido NO MOMENTO DA ENTREGA: soma o consumo do lead time. O pedido só
@@ -864,6 +867,27 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
     else:
         meta = _n(venda_comp.get(comprador)) * pct
     saldo = meta - realizado
+    # quebra por comprador (tabela do Orçamento): meta = venda_liq×pct de cada comprador;
+    # comprado/aberto = pedidos do mês. Inclui compradores com venda mas sem pedido.
+    # Só na visão "Empresa toda" (TODOS) — com filtro por comprador a quebra não faz sentido.
+    agg_c = {}
+    for p in (pedidos if todos else []):
+        if p["mes"] != mes:
+            continue
+        nome_c = p["comprador"] or "Sem comprador"
+        a = agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
+        a["comprado"] += _n(p["valor"])
+        a["aberto"] += _n(p["valor_aberto"])
+    for nome_c, v in ((venda_comp or {}).items() if todos else []):
+        a = agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
+        a["meta"] = _n(v) * pct
+    por_comprador = []
+    for a in agg_c.values():
+        a["saldo"] = _round(a["meta"] - a["comprado"])
+        a["pct_consumido"] = _round(a["comprado"] / a["meta"], 4) if a["meta"] > 0 else None
+        a["meta"] = _round(a["meta"]); a["comprado"] = _round(a["comprado"]); a["aberto"] = _round(a["aberto"])
+        por_comprador.append(a)
+    por_comprador.sort(key=lambda x: (x["meta"] or 0), reverse=True)
     abertos = [p for p in pedidos if not p["recebido"]]
     abertos.sort(key=lambda p: (p["dias_para_chegar"] if p["dias_para_chegar"] is not None else 9999))
     pedidos.sort(key=lambda p: (p["data_pedido"] or ""), reverse=True)
@@ -879,7 +903,7 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         "valor_aberto": _round(sum(p["valor_aberto"] for p in abertos)),
         "meta_auto": meta_override is None,
     }
-    return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos}
+    return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos, "por_comprador": por_comprador}
 
 
 # ───────────────────────── resumos gerenciais (painel do diretor) ─────────────────────────

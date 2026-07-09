@@ -554,9 +554,12 @@ function renderParado(P){
   const par=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=minDias);
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
+  P.forEach(p=>{const cx=p.caixa||1; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
   const cols=[colCod,colProd,colForn,{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
     {key:'dias_sem_venda',label:'Dias parado',num:true,fmt:v=>v==null?'nunca':int(v)},
-    {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'valor',label:'Valor',num:true,fmt:money},
+    {key:'qtdisp',label:'Disp.',num:true,fmt:int},
+    {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'valor',label:'Valor',num:true,fmt:money},
     {key:'status_saida',label:'Saída',badge:true},{key:'parado_faixa',label:'Faixa',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const el=$('#v-parado');
@@ -778,6 +781,9 @@ async function renderOrcamento(){
     </div>
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
       <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).</div></div>
+    ${(o.por_comprador||[]).length?`<div class="panel"><h3>Orçamento por comprador <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Meta</th><th class="num">Comprado</th><th class="num">Aberto</th><th class="num">Saldo</th><th class="num">Consumido</th></tr></thead>
+      <tbody>${o.por_comprador.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
     ${(r.n_atrasados||r.n_chega7)?`<div class="alerts">
       ${r.n_atrasados?alertCard(r.n_atrasados,'Entregas atrasadas',sum2(abertos.filter(p=>p.status_prazo==='atrasado'),'valor_aberto'),C.red,'orcamento',{}):''}
       ${r.n_chega7?alertCard(r.n_chega7,'Chegam em ≤7 dias',sum2(abertos.filter(p=>p.status_prazo==='chega_7'),'valor_aberto'),C.orange,'orcamento',{}):''}

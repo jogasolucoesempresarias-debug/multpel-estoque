@@ -8,6 +8,7 @@ Consome o dataset Power BI "Estoque" (+ RCA p/ comprador/venda). Senha única vi
 
 import io
 import os
+import re
 import csv
 import secrets
 from datetime import date, timedelta
@@ -855,7 +856,8 @@ def api_orcamento():
                                  mes, comprador, pct=pct, hoje=hoje, meta_override=None)
     manuais = store.pedidos_pendentes(mes, comprador) if store.disponivel() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
-                    "abertos": res["abertos"], "manuais": manuais})
+                    "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),
+                    "manuais": manuais})
 
 
 @app.route("/api/logistica")
@@ -953,22 +955,23 @@ def _gerar_pdf_pedido(pe, itens=None):
            + (f" · Forma pgto: <b>{_e(pe.get('forma_pgto'))}</b>" if pe.get('forma_pgto') else ""))
 
     if itens:
-        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+        # retrato (economiza folha); ordenado por código p/ digitar no sistema interno.
+        itens = sorted(itens, key=lambda it: core._n(it.get("codprod")))
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.2 * cm, rightMargin=1.2 * cm,
                                 topMargin=1.2 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
         story = [Paragraph('<b>Multpel · Estoque</b> — Pedido de Compra', titulo_style),
                  Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", sub_style),
                  Spacer(1, 0.25 * cm), Paragraph(cab, info_style), Spacer(1, 0.3 * cm)]
-        header = ["Cód", "Produto", "Disp.", "Cob.", "Giro/mês", "Sugerido", "Valor"]
+        header = ["Cód", "Cód fábrica", "Produto", "Disp.", "Sugerido", "Custo un.", "Valor"]
         data = [header]
         total = 0.0
         for it in itens:
-            cob = it.get("cobertura")
             total += core._n(it.get("valor"))
-            data.append([_i(it.get("codprod")), (str(it.get("descricao") or "")[:48]),
-                         _i(it.get("qtdisp")), (f"{int(round(float(cob)))}d" if cob not in (None, "") else "∞"),
-                         _i(it.get("giro_mes")), _sug(it), _m(it.get("valor"))])
+            data.append([_i(it.get("codprod")), _e(it.get("codfab") or "—"),
+                         (str(it.get("descricao") or "")[:42]), _i(it.get("qtdisp")),
+                         _sug(it), _m(it.get("custo_unit")), _m(it.get("valor"))])
         data.append(["", "", "", "", "", "TOTAL", _m(total)])
-        col_w = [1.6 * cm, 9.5 * cm, 2 * cm, 1.8 * cm, 2.4 * cm, 4 * cm, 3 * cm]
+        col_w = [1.5 * cm, 2.3 * cm, 6.5 * cm, 1.6 * cm, 2.9 * cm, 2.1 * cm, 2.3 * cm]
         tbl = Table(data, repeatRows=1, colWidths=col_w)
         tbl.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
@@ -977,7 +980,7 @@ def _gerar_pdf_pedido(pe, itens=None):
             ('FONTSIZE', (0, 0), (-1, -1), 7),
             ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8fafc')]),
-            ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
@@ -1019,7 +1022,14 @@ def api_pedido_pdf(pid):
     if not pe:
         return jsonify({"ok": False, "error": "Pedido não encontrado"}), 404
     itens = store.pedido_itens(pid)
-    nome = f"pedido_{pe.get('n_pedido') or pid}.pdf"
+    # enriquece com o código de fábrica (CODFAB do cadastro) p/ sair no PDF
+    if itens:
+        cad = _cadastro_produtos()
+        for it in itens:
+            it["codfab"] = (cad.get(int(core._n(it.get("codprod")))) or {}).get("CODFAB")
+    # arquivo com o nome do fornecedor (sanitizado); fallback no nº do pedido
+    base = re.sub(r'[^A-Za-z0-9 ._-]', '', str(pe.get("fornecedor") or "").strip()) or f"pedido_{pe.get('n_pedido') or pid}"
+    nome = f"{base}.pdf"
     return Response(_gerar_pdf_pedido(pe, itens), mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{nome}"'})
 
