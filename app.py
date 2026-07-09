@@ -146,6 +146,20 @@ UNIDADES = {
 }
 UNIDADE_PADRAO = "atacado"
 
+# Dados fixos do emitente (Multpel) p/ o cabeçalho do pedido de compra — estilo relatório 211.
+MULTPEL_EMPRESA = {
+    "razao": "MULTPEL COM. DE PAPEIS E EMBALAGENS LTDA",
+    "cnpj": "02.262.785/0001-04",
+    "ie": "081924950",
+    "endereco": "Rua Antonio Pedro Carleto, 56",
+    "bairro": "Vila Rica",
+    "cep": "29301-200",
+    "cidade": "Cachoeiro de Itapemirim",
+    "uf": "ES",
+    "tel": "(28) 3526-1450",
+    "email": "fiscal@mutpelatacado.com.br",
+}
+
 
 def _unidade():
     u = (request.args.get("unidade") or UNIDADE_PADRAO).lower()
@@ -907,13 +921,15 @@ def api_pedido_edit(pid):
     return jsonify({"ok": True})
 
 
-def _gerar_pdf_pedido(pe, itens=None):
-    """Documento PDF de UM pedido de compra. Com itens → ordem de compra (landscape,
-    lista de produtos + total); sem itens → cabeçalho/valor (retrato). Estética do painel."""
-    from reportlab.lib.pagesizes import A4, landscape
+def _gerar_pdf_pedido(pe, itens=None, forn=None):
+    """Documento PDF de UM pedido de compra. Com itens → ordem de compra no estilo do
+    relatório 211 do Winthor (logo + emitente + fornecedor + itens c/ IPI, retrato);
+    sem itens → cabeçalho/valor (retrato). `forn` = cadastro do fornecedor (PCFORNEC)."""
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.pdfgen import canvas as _rlcanvas
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_LEFT
     import math
@@ -963,39 +979,112 @@ def _gerar_pdf_pedido(pe, itens=None):
            + (f" · Forma pgto: <b>{_e(pe.get('forma_pgto'))}</b>" if pe.get('forma_pgto') else ""))
 
     if itens:
-        # retrato (economiza folha); ordenado por código p/ digitar no sistema interno.
+        # ordenado por código p/ facilitar a digitação no sistema interno (retrato, economiza folha).
         itens = sorted(itens, key=lambda it: core._n(it.get("codprod")))
+        azul = colors.HexColor('#0f2a5c')
+
+        # rodapé com "Página X de Y" (2 passadas: guarda estados e conta o total no save)
+        class _NumCanvas(_rlcanvas.Canvas):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k); self._saved = []
+            def showPage(self):
+                self._saved.append(dict(self.__dict__)); self._startPage()
+            def save(self):
+                n = len(self._saved)
+                for st in self._saved:
+                    self.__dict__.update(st)
+                    self.setFont('Helvetica', 7); self.setFillColor(colors.HexColor('#94a3b8'))
+                    self.drawString(1.2 * cm, 0.8 * cm, "Multpel · Estoque — documento interno de compra")
+                    self.drawRightString(A4[0] - 1.2 * cm, 0.8 * cm, f"Página {self._pageNumber} de {n}")
+                    _rlcanvas.Canvas.showPage(self)
+                _rlcanvas.Canvas.save(self)
+
+        tit_bloco = ParagraphStyle('tb', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold', textColor=colors.white)
+        corpo = ParagraphStyle('cb', parent=styles['Normal'], fontSize=7.6, textColor=colors.HexColor('#0a0e17'), leading=11.5)
+
+        def _bloco(titulo, corpo_html):
+            t = Table([[Paragraph(titulo, tit_bloco)], [Paragraph(corpo_html, corpo)]], colWidths=[18.6 * cm])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, 0), azul),
+                ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#94a3b8')),
+                ('LINEBELOW', (0, 0), (0, 0), 0.4, colors.HexColor('#94a3b8')),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]))
+            return t
+
+        E, F = MULTPEL_EMPRESA, (forn or {})
+        # cabeçalho: logo Multpel + título/nº do pedido
+        head_dir = Paragraph(
+            f"<b>Pedido de Compra</b><br/><font size=9>Nº <b>{_e(pe.get('n_pedido') or pe.get('id') or '—')}</b> · "
+            f"Emissão <b>{_d(pe.get('data_pedido'))}</b></font><br/>"
+            f"<font size=7 color='#64748b'>Gerado em {date.today().strftime('%d/%m/%Y %H:%M')}</font>", titulo_style)
+        logo_path = os.path.join(os.path.dirname(__file__), "static", "logo-multpel-trofeu.png")
+        try:
+            head_row = Table([[Image(logo_path, width=2.3 * cm, height=2.3 * cm), head_dir]], colWidths=[2.7 * cm, 15.9 * cm])
+        except Exception:
+            head_row = Table([[head_dir]], colWidths=[18.6 * cm])
+        head_row.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                      ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+
+        emp_html = (f"<b>{_e(E['razao'])}</b> &nbsp;·&nbsp; CNPJ {_e(E['cnpj'])} &nbsp;·&nbsp; IE {_e(E['ie'])}<br/>"
+                    f"{_e(E['endereco'])} · {_e(E['bairro'])} · CEP {_e(E['cep'])} · {_e(E['cidade'])}/{_e(E['uf'])}<br/>"
+                    f"Tel {_e(E['tel'])} &nbsp;·&nbsp; {_e(E['email'])}")
+        cidade_f = (f"{_e(F.get('CIDADE'))}/{_e(F.get('ESTADO'))}" if F.get('CIDADE') else '—')
+        forn_html = (f"<b>{_i(pe.get('codfornec') or F.get('CODFORNEC'))} · {_e(pe.get('fornecedor') or F.get('FORNECEDOR') or '—')}</b><br/>"
+                     f"CNPJ {_e(F.get('CGC') or '—')} &nbsp;·&nbsp; IE {_e(F.get('IE') or '—')}<br/>"
+                     f"Nº {_e(F.get('NUMEROEND') or '—')} · Bairro {_e(F.get('BAIRRO') or '—')} · CEP {_e(F.get('CEP') or '—')} · {cidade_f}"
+                     + (f" &nbsp;·&nbsp; {_e(F.get('EMAIL'))}" if F.get('EMAIL') else ""))
+        ped_html = (f"Comprador: <b>{_e(pe.get('comprador') or '—')}</b> &nbsp;·&nbsp; "
+                    f"Prazo pgto: <b>{(str(pe.get('prazo_dias'))+' dias') if pe.get('prazo_dias') else '—'}</b> &nbsp;·&nbsp; "
+                    f"Vencimento: <b>{_d(pe.get('dt_vencimento'))}</b> &nbsp;·&nbsp; "
+                    f"Forma pgto: <b>{_e(pe.get('forma_pgto') or '—')}</b> &nbsp;·&nbsp; "
+                    f"Status: <b>{_e(pe.get('status') or '—')}</b>"
+                    + (f"<br/>Obs: {_e(pe.get('obs'))}" if pe.get('obs') else ""))
+
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.2 * cm, rightMargin=1.2 * cm,
-                                topMargin=1.2 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
-        story = [Paragraph('<b>Multpel · Estoque</b> — Pedido de Compra', titulo_style),
-                 Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", sub_style),
-                 Spacer(1, 0.25 * cm), Paragraph(cab, info_style), Spacer(1, 0.3 * cm)]
-        header = ["Cód", "Cód fábrica", "Produto", "Disp.", "Sugerido", "Custo un.", "Valor"]
+                                topMargin=1.0 * cm, bottomMargin=1.4 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
+        story = [head_row, Spacer(1, 0.2 * cm),
+                 _bloco("EMITENTE", emp_html), Spacer(1, 0.12 * cm),
+                 _bloco("FORNECEDOR", forn_html), Spacer(1, 0.12 * cm),
+                 _bloco("DADOS DO PEDIDO", ped_html), Spacer(1, 0.28 * cm)]
+
+        header = ["Cód", "Descrição", "Embalagem", "Un", "Cód.Fab", "Qtde", "Custo un.", "IPI %", "Vlr. Total"]
         data = [header]
         total = 0.0
         for it in itens:
             total += core._n(it.get("valor"))
-            data.append([_i(it.get("codprod")), _e(it.get("codfab") or "—"),
-                         (str(it.get("descricao") or "")[:42]), _i(it.get("qtdisp")),
-                         _sug(it), _m(it.get("custo_unit")), _m(it.get("valor"))])
-        data.append(["", "", "", "", "", "TOTAL", _m(total)])
-        col_w = [1.5 * cm, 2.3 * cm, 6.5 * cm, 1.6 * cm, 2.9 * cm, 2.1 * cm, 2.3 * cm]
+            cx = core._n(it.get("qtunitcx")); q = core._n(it.get("qtd"))
+            if cx > 1 and q > 0:
+                qtde, un = f"{int(math.ceil(q / cx))}", "CX"
+            else:
+                qtde, un = (f"{int(q)}" if q else "—"), "UN"
+            ipi = core._n(it.get("percipi"))
+            data.append([_i(it.get("codprod")), (str(it.get("descricao") or "")[:40]),
+                         _e(it.get("embalagem") or "—"), un, _e(it.get("codfab") or "—"),
+                         qtde, _m(it.get("custo_unit")),
+                         (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
+        data.append(["", "", "", "", "", "", "", "TOTAL", _m(total)])
+        col_w = [1.3 * cm, 5.0 * cm, 2.4 * cm, 0.9 * cm, 1.8 * cm, 1.3 * cm, 2.0 * cm, 1.2 * cm, 2.7 * cm]
         tbl = Table(data, repeatRows=1, colWidths=col_w)
         tbl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+            ('BACKGROUND', (0, 0), (-1, 0), azul),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 7),
+            ('FONTSIZE', (0, 0), (-1, -1), 6.5),
             ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8fafc')]),
-            ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f4f7fb')]),
+            ('ALIGN', (5, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (3, 0), (3, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3), ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 2.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
             ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')),
+            ('SPAN', (0, -1), (6, -1)),
         ]))
         story.append(tbl)
-        doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+        doc.build(story, canvasmaker=_NumCanvas)
     else:
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.6 * cm, rightMargin=1.6 * cm,
                                 topMargin=1.4 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
@@ -1030,15 +1119,22 @@ def api_pedido_pdf(pid):
     if not pe:
         return jsonify({"ok": False, "error": "Pedido não encontrado"}), 404
     itens = store.pedido_itens(pid)
-    # enriquece com o código de fábrica (CODFAB do cadastro) p/ sair no PDF
+    # enriquece cada item com cód. de fábrica, % IPI e embalagem (do cadastro) p/ o PDF estilo 211
     if itens:
         cad = _cadastro_produtos()
         for it in itens:
-            it["codfab"] = (cad.get(int(core._n(it.get("codprod")))) or {}).get("CODFAB")
+            c = cad.get(int(core._n(it.get("codprod")))) or {}
+            it["codfab"] = c.get("CODFAB")
+            it["percipi"] = c.get("PERCIPI")
+            it["embalagem"] = c.get("EMBALAGEM")
+    # dados do fornecedor (PCFORNEC) p/ o bloco do cabeçalho
+    forn = None
+    if pe.get("codfornec") not in (None, ""):
+        forn = _cadastro_fornecedores().get(int(core._n(pe.get("codfornec"))))
     # arquivo com o nome do fornecedor (sanitizado); fallback no nº do pedido
     base = re.sub(r'[^A-Za-z0-9 ._-]', '', str(pe.get("fornecedor") or "").strip()) or f"pedido_{pe.get('n_pedido') or pid}"
     nome = f"{base}.pdf"
-    return Response(_gerar_pdf_pedido(pe, itens), mimetype="application/pdf",
+    return Response(_gerar_pdf_pedido(pe, itens, forn=forn), mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{nome}"'})
 
 
