@@ -1094,10 +1094,11 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
         dtval = _parse_dt(r.get("DTVAL"))
         if not dtval:
             continue
-        a = agg.setdefault((cod, dtval), {"qt": 0.0, "n_lotes": 0, "lote": None})
+        a = agg.setdefault((cod, dtval), {"qt": 0.0, "n_lotes": 0, "lote": None, "desc": None})
         a["qt"] += _n(r.get("qt"))
         a["n_lotes"] += 1
         a["lote"] = r.get("NUMLOTE") or a["lote"]
+        a["desc"] = a["desc"] or r.get("DESCRICAO")   # nome vindo do próprio lote (LOOKUPVALUE)
 
     out = []
     for (cod, dtval), a in agg.items():
@@ -1129,7 +1130,7 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
 
         out.append({
             "codprod": cod,
-            "descricao": p.get("descricao") or f"PRODUTO {cod}",
+            "descricao": p.get("descricao") or a.get("desc") or f"PRODUTO {cod}",
             "fornecedor": p.get("fornecedor"),
             "comprador": p.get("comprador"),
             "numlote": numlote,

@@ -329,10 +329,13 @@ def q_validade(data_ini, data_fim, filiais=None):
     filtros = ["PCENDERECO[RUA] <> 99"]
     if lista:
         filtros.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    # DESCRICAO via LOOKUPVALUE (PCESTENDERECO e PCPRODUT são ilhas, sem relacionamento):
+    # garante o nome mesmo p/ item zerado no gerencial que não entra na lista principal.
     inner = """ADDCOLUMNS(
         SUMMARIZE(PCESTENDERECO,
             PCESTENDERECO[CODPROD], PCESTENDERECO[NUMLOTE], PCESTENDERECO[DTVAL]),
-        "qt", CALCULATE(SUM(PCESTENDERECO[QT]))
+        "qt", CALCULATE(SUM(PCESTENDERECO[QT])),
+        "DESCRICAO", LOOKUPVALUE(PCPRODUT[DESCRICAO], PCPRODUT[CODPROD], PCESTENDERECO[CODPROD])
     )"""
     return f"""EVALUATE
 FILTER(
