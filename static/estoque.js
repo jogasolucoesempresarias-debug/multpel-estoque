@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:''},
+  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
 };
@@ -186,7 +186,7 @@ function exportQS(){
   if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
-  if(f.cobFaixa) p.set('cob_faixa',f.cobFaixa);
+  if(f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
   if(f.cobSub) p.set('cob_sub',f.cobSub);
   if(f.cobPed) p.set('cob_ped',f.cobPed);
   if(f.parClasse) p.set('par_classe',f.parClasse);
@@ -248,6 +248,9 @@ const FX_COB=[{key:'0-30',label:'0-30 · risco ruptura',color:C.red},{key:'31-60
   {key:'61-90',label:'61-90 · atenção',color:C.yellow},{key:'91-120',label:'91-120 · urgente',color:C.orange},
   {key:'121+',label:'121+ · crítico',color:C.purple}];
 const cobDiasFmt = v => v==null?'—':(v>=9999?'∞':int(v)+'d');
+// filtro de faixa de cobertura é MULTI-seleção (pode marcar várias faixas de uma vez)
+const cobFaixaLabel=arr=>!arr.length?'Todas':(arr.length===1?((FX_COB.find(f=>f.key===arr[0])||{}).label||arr[0]):`${arr.length} faixas`);
+function cobToggle(k){ const a=S.cli.cobFaixa||[]; S.cli.cobFaixa=a.includes(k)?a.filter(x=>x!==k):[...a,k]; S.cli.cobSub=''; render(); }
 
 function renderRuptura(P){
   // distribuição da cobertura sobre a base inteira (igual à planilha), com valor por faixa
@@ -265,12 +268,13 @@ function renderRuptura(P){
     {key:'sugestao_cx',label:'Sugerido',num:true,html:p=>sugCxN(p)},
     {key:'cobertura_faixa',label:'Faixa',badge:true}];
   // no 121+ mostra a natureza (sem giro × excesso real) — separa estoque morto de excesso de compra
-  const is121=S.cli.cobFaixa==='121+';
+  const cf=S.cli.cobFaixa||[];
+  const is121=cf.length===1&&cf[0]==='121+';
   if(is121) cols.push({key:'_tipo',label:'Tipo',html:p=>p.sem_giro
     ?'<span class="badge" style="background:#64748b22;color:#94a3b8">sem giro</span>'
     :'<span class="badge" style="background:#c084fc22;color:#c084fc">excesso</span>'});
   let rf=P;
-  if(S.cli.cobFaixa) rf=rf.filter(p=>p.cobertura_faixa===S.cli.cobFaixa);
+  if(cf.length) rf=rf.filter(p=>cf.includes(p.cobertura_faixa));
   if(is121&&S.cli.cobSub==='semgiro') rf=rf.filter(p=>p.sem_giro);
   if(is121&&S.cli.cobSub==='excesso') rf=rf.filter(p=>p.excesso_real);
   if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
@@ -279,13 +283,12 @@ function renderRuptura(P){
   const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
   el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
-    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)',faixas,P,p=>p.valor,S.cli.cobFaixa||'','ch-cob')+
+    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)',faixas,P,p=>p.valor,cf,'ch-cob')+
     `<div class="row" style="gap:14px;margin-bottom:4px">
-       <div class="fb-group"><label>Faixa</label>
-         <select id="cob-faixa" class="fb-control" style="width:auto">
-           <option value="">Todas</option>
-           ${FX_COB.map(f=>`<option value="${f.key}" ${S.cli.cobFaixa===f.key?'selected':''}>${f.label}</option>`).join('')}
-         </select></div>
+       <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
+         <details class="ms" id="cob-faixa"><summary class="fb-control" style="width:auto">${cobFaixaLabel(cf)}</summary>
+           <div class="ms-menu">${FX_COB.map(f=>`<label><input type="checkbox" value="${f.key}" ${cf.includes(f.key)?'checked':''}>${f.label}</label>`).join('')}</div>
+         </details></div>
        ${is121?`<div class="fb-group"><label>121+ · natureza</label>
          <select id="cob-sub" class="fb-control" style="width:auto">
            <option value="">Tudo (${int(semG.length+exc.length)})</option>
@@ -300,10 +303,10 @@ function renderRuptura(P){
          </select></div>
      </div>
      <div class="count-line">Cobertura = <b>ARREDONDA.CIMA(estoque ÷ giro diário)</b>; giro 0 → não calculável (cai em 121+). Métrica oficial da planilha. Ordene por <b>Valor estoque</b> p/ atacar maior capital. No <b>121+</b>, "sem giro" é estoque morto (liquidar) e "excesso real" é cobertura alta (reduzir compra).</div>`+renderTable(rf,cols,'ruptura');
-  drawFaixaChart('ch-cob',faixas,f=>{S.cli.cobFaixa=(S.cli.cobFaixa===f.key)?'':f.key;S.cli.cobSub='';render();});
-  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const k=d.dataset.fkey;S.cli.cobFaixa=(S.cli.cobFaixa===k)?'':k;S.cli.cobSub='';render();});
+  drawFaixaChart('ch-cob',faixas,f=>cobToggle(f.key));
+  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>cobToggle(d.dataset.fkey));
   wirePorComprador(el);
-  const fx=$('#cob-faixa'); if(fx) fx.onchange=e=>{S.cli.cobFaixa=e.target.value;S.cli.cobSub='';render();};
+  const fx=$('#cob-faixa'); if(fx) fx.addEventListener('change',()=>{S.cli.cobFaixa=[...fx.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);S.cli.cobSub='';render();});
   const sb=$('#cob-sub'); if(sb) sb.onchange=e=>{S.cli.cobSub=e.target.value;render();};
   const pd=$('#cob-ped'); if(pd) pd.onchange=e=>{S.cli.cobPed=e.target.value;render();};
 }
@@ -519,7 +522,7 @@ function wirePorComprador(el){
     tr.onclick=()=>{S.cli.comprador=(S.cli.comprador===cod)?'':cod; const sel=$('#f-comprador'); if(sel){sel.value=S.cli.comprador;S.compradorNome=S.cli.comprador?(sel.selectedOptions[0]?.textContent||''):'';} render();};});
 }
 function resumoFaixasBlock(titulo,faixas,items,valorFn,active,chartId){
-  const cards=faixas.map(f=>`<div class="vfx ${f.key===active?'on':''}" data-fkey="${f.key}" style="--c:${f.color}">
+  const cards=faixas.map(f=>`<div class="vfx ${(Array.isArray(active)?active.includes(f.key):f.key===active)?'on':''}" data-fkey="${f.key}" style="--c:${f.color}">
       <div class="vfx-h">${f.label}</div><div class="vfx-v">${money(f.valor)}</div>
       <div class="vfx-s">${int(f.qt)} itens</div></div>`).join('');
   return `<div class="panel"><h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
@@ -1089,7 +1092,7 @@ function render(){
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa||''; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -1144,15 +1147,15 @@ async function init(){
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:''};
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[]};
     S.compradorNome='';
     ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
     $('#f-busca').value='';
     render();
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
-  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa='';S.cli.cobSub='';render();});
-  document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa='';S.cli.cobSub=''; render(); }});
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
+  document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);

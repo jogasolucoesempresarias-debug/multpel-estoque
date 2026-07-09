@@ -599,7 +599,8 @@ def _aplicar_filtros_cliente(produtos):
     if g("ez_status"):
         out = [p for p in out if p.get("status_exec") == g("ez_status")]
     if g("cob_faixa"):
-        out = [p for p in out if p.get("cobertura_faixa") == g("cob_faixa")]
+        _cf = {x for x in g("cob_faixa").split(",") if x}   # multi-seleção de faixas
+        out = [p for p in out if p.get("cobertura_faixa") in _cf]
     if g("cob_sub") == "semgiro":
         out = [p for p in out if p.get("sem_giro")]
     elif g("cob_sub") == "excesso":
