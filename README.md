@@ -8,18 +8,20 @@ Foco no **comprador**: ruptura, reposição, validade/FEFO, cobertura/giro, orç
 ---
 
 ## Stack
-Flask + Waitress · HTML/JS + Chart.js · Power BI executeQueries (datasets **Estoque** + **RCA**) · Postgres (orçamento/planos de ação).
+Flask + Waitress · HTML/JS + Chart.js · Power BI executeQueries (datasets **Estoque** + **RCA**) · Postgres (orçamento/planos de ação) · ReportLab (export PDF dos relatórios gerenciais).
+> Código dividido em módulos: `app.py` (rotas), `core.py` (regra de negócio), `queries.py` (DAX), `pbi.py` (client Power BI), `store.py` (Postgres).
 
 ## Dados / metodologia (resumo) — v3
 Consome **4 tabelas novas do Winthor** no dataset Estoque: **PCPEDIDO/PCITEM** (pedido de compra real),
 **PCEMBALAGEM** (caixa/cubagem) e **PCEMPR** (comprador no próprio dataset).
-- **Estoque (QTDISP)** = **gerencial** (`QTESTGER` cru, filiais 3+5) para tudo; **endereçado** (`PCESTENDERECO`, RUA≠99) **só na validade/FEFO** (estoque por lote).
+- **Estoque (Disponível / QTDISP)** = **gerencial** líquido: `QTESTGER − avaria (QTBLOQUEADA) − reserva (QTRESERV)`, filiais 3+5 (decisão do diretor 07/2026 — itens em avaria/reservados não estão disponíveis p/ venda; substitui o "QTESTGER cru" anterior). **Endereçado** (`PCESTENDERECO`, RUA≠99) **só na validade/FEFO** (estoque por lote).
 - **Giro** = média dos 3 últimos meses (`QTVENDMES1..3`/3); toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`.
 - **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME` (no próprio dataset Estoque; RCA só p/ venda).
-- **Sugestão de compra** desconta o **pedido de compra REAL em aberto** (PCPEDIDO/PCITEM, qtd pedida − entregue, últimos 180 dias) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); prioriza sobre o estoque projetado (disponível + já pedido).
+- **Sugestão de compra** desconta o **pedido de compra REAL em aberto** (PCPEDIDO/PCITEM, qtd pedida − entregue, últimos 180 dias) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM) — quando o item **não tem fator de caixa** cadastrado no Winthor, sai em **unidades** ("un"); normaliza sozinho quando o TI cadastrar o QTUNIT (itens pendentes em `itens_sem_fator_caixa.csv`). Prioriza sobre o estoque projetado (disponível + já pedido).
 - **Orçamento** = meta `65% da venda líquida 30d` por comprador (RCA) × realizado lido **direto do Winthor**; acompanhamento de pedidos por previsão de entrega (híbrido `DTPREVENT`/emissão+lead); logística por cubagem.
 - **Venda/lucro/margem** = `FATURAMENTO_VENDAS` (RCA), líquida (− devoluções), por período.
-- **Navegação** em 2 níveis: Visão · Comprar · Pedidos · Estoque · Análise.
+- **Unidades de negócio**: filtro por unidade (escopa a venda por filial, com código da filial no seletor).
+- **Navegação** em 2 níveis: Visão · Comprar · Pedidos · Estoque · Análise. A aba **Visão** é dividida em **Cockpit** + **Painel gerencial** (5 pilares); o painel mostra "Venda perdida/mês" (não "Valor em ruptura"), coluna **Avaria** e colunas em **caixa** (Disp. cx, Giro cx, Sugerido cx). Filtros são por aba.
 - Metodologia v3 completa (fórmulas decodificadas da planilha) em **`docs/planilha_v3.md`**.
 
 ---
