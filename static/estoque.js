@@ -380,7 +380,7 @@ function renderReposicao(P){
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × ${int(S.params.cob)}d) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). Lead time usa o prazo do fornecedor quando houver.</div>`+
+    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}</small></span>

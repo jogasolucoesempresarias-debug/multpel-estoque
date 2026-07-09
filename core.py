@@ -292,7 +292,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         lead = prazo_forn if prazo_forn > 0 else params["lead_time"]
         est_seg = giro_dia * params["dias_seguranca"]
         rop = giro_dia * lead + est_seg
-        est_alvo = giro_dia * params["cobertura_total"]
+        # alvo medido NO MOMENTO DA ENTREGA: soma o consumo do lead time. O pedido só
+        # chega em `lead` dias e o estoque continua caindo até lá — sem isso a compra
+        # assume "entrega hoje" e sub-dimensiona (verificado pelo diretor 07/2026).
+        # Ex.: lead 10 + cobertura 45 = alvo de 55 dias de giro.
+        est_alvo = giro_dia * (lead + params["cobertura_total"])
         # posição efetiva = disponível + pedido de compra REAL em aberto (Winthor).
         # Como o gerencial já reflete o que foi recebido, o "já pedido" é só o ABERTO
         # (qtped−entregue) — evita comprar de novo o que já está pedido e não duplica estoque.
