@@ -402,6 +402,12 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # valor da compra líquida sugerida (caixa fechada × custo, ou unidades × custo se sem fator)
         valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao_cx * custofin)
 
+        # cubagem da caixa: PCEMBALAGEM[VOLUME] (oficial); se faltar (muito item sem cadastro
+        # na embalagem), deriva do PCPRODUT[VOLUME] (unitário × fator de caixa) — mesma fonte
+        # que a aba Logística usa. Assim a cubagem deixa de vir vazia p/ a maioria.
+        _fator_cx = caixa if caixa and caixa > 1 else 1
+        cub_caixa = _n(emb.get("volume")) or (_n(cad.get("VOLUME")) * _fator_cx)
+
         # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
         tem_compra = sugestao_cx > 0
         if qtdisp <= 0:
@@ -468,7 +474,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
             "valor_sugerido_liq": _round(valor_sugerido_liq),
             "status_exec": status_exec, "acao_rec": acao_rec,
-            "cubagem_caixa_m3": _round(_n(emb.get("volume")), 5) if emb.get("volume") else None,
+            "cubagem_caixa_m3": _round(cub_caixa, 5) if cub_caixa else None,
             "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,
             "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,

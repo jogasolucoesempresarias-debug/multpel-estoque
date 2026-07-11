@@ -320,6 +320,7 @@ function renderEstoqueZero(P){
   const cols=[colCod,colProd,colForn,
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
+    {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'nunca':int(v)},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,html:p=>p.qtd_ja_pedida>0?cxUn(p.qtd_ja_pedida,p.caixa):'—'},
     {key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${cxUn(p.giro_mes,p.caixa)} ${spark(p.serie_giro)}`},
     {key:'sugestao_cx',label:'Sugerido (cx)',num:true,html:p=>sugCxN(p)},

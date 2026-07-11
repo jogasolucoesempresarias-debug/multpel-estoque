@@ -562,8 +562,8 @@ _CSV_COLS = {
                "valor", "cobertura", "parado_faixa"],
     "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
                 "cobertura_faixa", "qtd_ja_pedida", "giro_mes", "sugestao_compra"],
-    "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qtd_ja_pedida",
-                     "giro_mes", "sugestao_cx", "status_exec"],
+    "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "dias_sem_venda",
+                     "qtd_ja_pedida", "giro_mes", "sugestao_cx", "status_exec"],
 }
 
 
@@ -738,8 +738,8 @@ _PDF_COLS = {
                 ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
                 ("sugestao_compra", "Sugerido", "int")],
     "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
-                     ("qtdisp", "Estoque", "int"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
-                     ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
+                     ("qtdisp", "Estoque", "int"), ("dias_sem_venda", "Dias s/ venda", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
+                     ("giro_mes", "Giro/mês", "int"), ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
     "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34), ("comprador", "Comprador", "text", 18),
                  ("fornecedor", "Fornecedor", "text", 22),
                  ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
@@ -1123,11 +1123,14 @@ def api_pedido_pdf(pid):
     # enriquece cada item com cód. de fábrica, % IPI e embalagem (do cadastro) p/ o PDF estilo 211
     if itens:
         cad = _cadastro_produtos()
+        emb_map = _embalagem_map()
         for it in itens:
-            c = cad.get(int(core._n(it.get("codprod")))) or {}
+            cod = int(core._n(it.get("codprod")))
+            c = cad.get(cod) or {}
             it["codfab"] = c.get("CODFAB")
             it["percipi"] = c.get("PERCIPI")
-            it["embalagem"] = c.get("EMBALAGEM")
+            # embalagem = a da CAIXA (PCEMBALAGEM, igual à tela do Abastecimento); fallback no cadastro
+            it["embalagem"] = (emb_map.get(cod) or {}).get("embalagem") or c.get("EMBALAGEM")
     # dados do fornecedor (PCFORNEC) p/ o bloco do cabeçalho
     forn = None
     if pe.get("codfornec") not in (None, ""):
