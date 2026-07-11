@@ -131,6 +131,19 @@ CALCULATETABLE(
 )"""
 
 
+def q_pedido_itens_um(numped):
+    """Itens (PCITEM) de UM pedido específico — drill 'ver itens comprados' no Orçamento."""
+    return f"""EVALUATE
+FILTER(
+    ADDCOLUMNS(
+        SUMMARIZE(PCITEM, PCITEM[NUMPED], PCITEM[CODPROD]),
+        "qtped",      CALCULATE(SUM(PCITEM[QTPEDIDA])),
+        "qtentregue", CALCULATE(SUM(PCITEM[QTENTREGUE]))
+    ),
+    PCITEM[NUMPED] = {int(numped)}
+)"""
+
+
 # ───────────────────────── embalagem / cubagem (PCEMBALAGEM) ────────────────────
 def q_embalagem():
     """Por CODPROD: caixa (MAX QTUNIT) + cubagem (VOLUME/dimensões) + peso.

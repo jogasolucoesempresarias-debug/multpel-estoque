@@ -660,14 +660,14 @@ function renderRupturaComprador(P){
   }
   const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
     {k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida/mês',num:1},{k:'repor',label:'Custo reposição',num:1}];
-  function tabela(rows0,skk,lbl0){
+  function tabela(rows0,skk,lbl0,nav){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
     const ck=[{k:'nome',label:lbl0},...ckBase];
     const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor}),{n:0,rupt:0,semped:0,perdida:0,repor:0});
     const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${int(T.semped)}</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
     return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
+      <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
   }
   const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
   const porCurva=agrupa(p=>p.curva_abc||'C', (p,k)=>'Curva '+k);
@@ -682,9 +682,10 @@ function renderRupturaComprador(P){
      </div>
      <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). "Venda perdida/mês" = giro mensal × custo. "Custo reposição" = sugestão × custo.</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
-     <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões)</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC')}</div>`;
+     <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);
   wireSortTbl($('#rc-curva'),'ruptcurva',render);
+  $('#rc-curva').querySelectorAll('tr[data-curva]').forEach(tr=>tr.onclick=()=>goView('estoque_zero',{curva:tr.dataset.curva}));
 }
 
 function renderProdutos(P){
@@ -837,7 +838,7 @@ async function renderOrcamento(useCache){
     </div>`:''}
     <div class="panel" id="orc-abertos"><h3>Acompanhamento de pedidos em aberto <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
       ${abertos.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsA,skA||{})}</tr></thead>
-      <tbody>${abertosS.map(pe=>`<tr><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+      <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>
     ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
@@ -847,6 +848,7 @@ async function renderOrcamento(useCache){
   wireSortTbl($('#orc-comp'),'orc_comp',()=>renderOrcamento(true));
   wireSortTbl($('#orc-abertos'),'orc_abertos',()=>renderOrcamento(true));
   wireSortTbl($('#orc-manuais'),'orc_manuais',()=>renderOrcamento(true));
+  $('#orc-abertos').querySelectorAll('tr[data-numped]').forEach(tr=>tr.onclick=()=>modalPedidoItens(tr.dataset.numped));
   el.querySelectorAll('[data-delped]').forEach(b=>b.onclick=async()=>{ await postJSON('/api/pedidos/'+b.dataset.delped,{}, 'DELETE'); toast('Pedido removido'); renderOrcamento(); });
 }
 function sum2(arr,key){ key=key||'valor'; return arr.reduce((s,p)=>s+(p[key]||0),0); }
@@ -971,6 +973,20 @@ function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdis
   giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,qtd:(qtd!=null?qtd:(p.sugestao_compra||0))}; }
 
 // Construtor de pedido com itens. opts: produto único (do 360°) | {fornecedor,codfornec,itens} (sugestão) | null (manual)
+// drill: itens comprados de um pedido REAL do Winthor (PCITEM)
+async function modalPedidoItens(numped){
+  openModal(`<h3>Itens comprados — pedido ${esc(numped)}</h3><div id="pi-body"><div class="loader"><div class="spinner"></div></div></div><div class="m-acts"><button class="btn" id="m-cancel">Fechar</button></div>`, true);
+  $('#m-cancel').onclick=closeModal;
+  try{
+    const o=await getJSON('/api/pedido_itens/'+numped); const it=o.itens||[];
+    $('#pi-body').innerHTML=it.length
+      ? `<div class="tbl-wrap" style="max-height:360px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Pedida</th><th class="num">Entregue</th><th class="num">A entregar</th></tr></thead>
+         <tbody>${it.map(x=>`<tr data-cod="${x.codprod}" style="cursor:pointer"><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao)}</span></td><td class="num">${int(x.qtped)}</td><td class="num">${int(x.qtentregue)}</td><td class="num">${x.aberto>0?int(x.aberto):'—'}</td></tr>`).join('')}</tbody></table></div>
+         <div class="count-line">${it.length} itens no pedido. Clique num item p/ abrir o produto.</div>`
+      : '<div class="empty">Sem itens neste pedido.</div>';
+    $('#pi-body').querySelectorAll('tr[data-cod]').forEach(tr=>tr.onclick=()=>{ closeModal(); openProduto(tr.dataset.cod); });
+  }catch(e){ $('#pi-body').innerHTML=`<div class="empty">Erro ao carregar itens: ${e.message}</div>`; }
+}
 function modalPedido(opts){
   opts=opts||{};
   let itens=[], fornIni='';

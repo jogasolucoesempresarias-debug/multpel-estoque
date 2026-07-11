@@ -1116,6 +1116,21 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
     return buf.getvalue()
 
 
+@app.route("/api/pedido_itens/<int:numped>")
+def api_pedido_itens_winthor(numped):
+    """Itens comprados de um pedido REAL do Winthor (PCITEM) — drill do Orçamento."""
+    rows = pbi.run_dax(Q.q_pedido_itens_um(numped))
+    cad = _cadastro_produtos()
+    itens = []
+    for r in rows:
+        cod = int(core._n(r.get("CODPROD")))
+        qp, qe = core._n(r.get("qtped")), core._n(r.get("qtentregue"))
+        itens.append({"codprod": cod, "descricao": (cad.get(cod) or {}).get("DESCRICAO") or f"PRODUTO {cod}",
+                      "qtped": core._round(qp), "qtentregue": core._round(qe), "aberto": core._round(max(0.0, qp - qe))})
+    itens.sort(key=lambda x: x["codprod"])
+    return jsonify({"ok": True, "numped": numped, "itens": itens})
+
+
 @app.route("/api/pedidos/<int:pid>.pdf")
 def api_pedido_pdf(pid):
     if not store.disponivel():
