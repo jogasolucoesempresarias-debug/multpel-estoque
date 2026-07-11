@@ -670,12 +670,11 @@ def _export_data(view):
         if view == "reposicao":
             linhas = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
         elif view == "parado":
-            # dias parados >= filtro (param); nunca-vendidos (None) sempre entram. Agrupa por fornecedor.
-            pmin = core.merge_params(request.args.to_dict()).get("parado_atencao", 15)
-            def _pdias(p):
-                d = p.get("dias_sem_venda")
-                return float("inf") if d is None else d
-            linhas = sorted((p for p in produtos if (p.get("qtdisp") or 0) > 0 and _pdias(p) >= pmin),
+            # universo do parado = parado_faixa != None (≥15d, com estoque); filtro opcional por faixa
+            # (mesmo critério da tela, p/ o export bater com o que aparece). Agrupa por fornecedor.
+            _pf = request.args.get("par_faixa")
+            faixas_sel = {x for x in _pf.split(",") if x} if _pf else None
+            linhas = sorted((p for p in produtos if p.get("parado_faixa") and (faixas_sel is None or p["parado_faixa"] in faixas_sel)),
                             key=lambda p: ((p.get("fornecedor") or "").upper(), p.get("codprod") or 0))
         elif view == "ruptura":
             # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º

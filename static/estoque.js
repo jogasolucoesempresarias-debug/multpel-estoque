@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[]},
+  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
 };
@@ -167,7 +167,7 @@ function renderTable(P,cols,view,onClickRow){
     cont.querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[view]||{};S.sort[view]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
     cont.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=e=>{ if(e.target.closest('.rowact'))return; (onClickRow||openProduto)(tr.dataset.cod);});
   },0);
-  return note+`<div class="tbl-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  return note+`<div class="tbl-wrap${view==='produtos'?' freeze2':''}"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 const colCod={key:'codprod',label:'Cód',num:true};
 const colProd={key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`};
@@ -193,6 +193,7 @@ function exportQS(){
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
   if(f.ezStatus) p.set('ez_status',f.ezStatus);
   if(f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
+  if(f.parFaixa && f.parFaixa.length && S.view==='parado') p.set('par_faixa',f.parFaixa.join(','));
   if(f.cobSub) p.set('cob_sub',f.cobSub);
   if(f.cobPed) p.set('cob_ped',f.cobPed);
   if(f.parClasse) p.set('par_classe',f.parClasse);
@@ -233,7 +234,7 @@ function renderCockpit(P){
    </div>
    <div class="row">
      <div class="panel grow"><h3>Curva ABC (valor em estoque)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
-       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${money(k.abc[c].valor)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.valor_total?k.abc[c].valor/k.valor_total*100:0,0)}% do valor</td></tr>`).join('')}</table>
+       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(k.abc[c].valor)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.valor_total?k.abc[c].valor/k.valor_total*100:0,0)}% do valor</td></tr>`).join('')}</table>
      </div>
    </div>
    <div class="row">
@@ -556,13 +557,16 @@ const FX_PARADO=[{label:'15-30',lo:15,hi:30,color:C.green},{label:'31-60',lo:31,
 function paradoFaixaLabel(p){ const d=paradoDias(p); const f=FX_PARADO.find(f=>d>=f.lo&&d<=f.hi); return f?f.label:null; }
 function setParMin(v){ S.params.parado=v; const i=$('#p-parado'); if(i)i.value=v; render(); savePrefs(); }
 
+const parFaixaLabel=arr=>!arr.length?'Todas':(arr.length===1?arr[0]:`${arr.length} faixas`);
+function parToggle(k){ const a=S.cli.parFaixa||[]; S.cli.parFaixa=a.includes(k)?a.filter(x=>x!==k):[...a,k]; render(); }
 function renderParado(P){
-  // GRÁFICO = indicador do valor parado por faixa fixa (15+; nunca-vendeu em 121+). Independe do filtro.
-  const faixas=FX_PARADO.map(f=>{const it=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=f.lo && paradoDias(p)<=f.hi);
+  // universo do PARADO = itens com estoque e ≥15 dias sem venda (parado_faixa != null, nunca-vendeu
+  // em 121+), partido nas faixas 15-30…121+. As faixas SOMAM o total (reconcilia como a Cobertura).
+  const universo=P.filter(p=>p.parado_faixa);
+  const faixas=FX_PARADO.map(f=>{const it=universo.filter(p=>p.parado_faixa===f.label);
     return{...f,key:f.label,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
-  // TABELA = lista ordenável dos itens parados há >= minDias (nunca-vendidos sempre entram).
-  const minDias=+S.params.parado||15;
-  const par=P.filter(p=>(p.qtdisp||0)>0 && paradoDias(p)>=minDias);
+  const pf=S.cli.parFaixa||[];
+  const par=pf.length?universo.filter(p=>pf.includes(p.parado_faixa)):universo;
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
   P.forEach(p=>{const cx=p.caixa||1; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
@@ -575,15 +579,18 @@ function renderParado(P){
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Valor parado por faixa (dias sem venda) — indicador',faixas,par,p=>p.valor,'','ch-parado')
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)',faixas,universo,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
-        <div class="fb-group"><label>Dias parados (≥)</label><input type="number" id="par-min" value="${int(minDias)}" min="0" step="5" style="width:100px"></div>
-        <div class="count-line" style="margin:0">Puxa <b>${int(totItens)} itens</b> (${money(totVal)}) parados há <b>${int(minDias)} dias ou mais</b> — nunca vendidos incluídos. Lista ordenável (clique no cabeçalho). O gráfico é só indicador e não muda com o filtro; clicar numa faixa é atalho (= início da faixa).</div>
+        <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
+          <details class="ms" id="par-faixa"><summary class="fb-control" style="width:auto">${parFaixaLabel(pf)}</summary>
+            <div class="ms-menu">${FX_PARADO.map(f=>`<label><input type="checkbox" value="${f.label}" ${pf.includes(f.label)?'checked':''}>${f.label} dias</label>`).join('')}</div>
+          </details></div>
+        <div class="count-line" style="margin:0"><b>${int(totItens)} itens</b> · ${money(totVal)} parados${pf.length?' na(s) faixa(s) marcada(s)':' (≥15 dias, nunca vendidos incluídos)'}. <b>As faixas somam o total.</b> Clique num card/barra ou marque várias faixas.</div>
       </div>`
     +renderTable(par,cols,'parado');
-  drawFaixaChart('ch-parado',faixas,f=>{const b=FX_PARADO.find(x=>x.label===f.key); if(b)setParMin(b.lo);});
-  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>{const b=FX_PARADO.find(x=>x.label===d.dataset.fkey); if(b)setParMin(b.lo);});
-  const pm=$('#par-min'); if(pm) pm.onchange=e=>setParMin(+e.target.value||0);
+  drawFaixaChart('ch-parado',faixas,f=>parToggle(f.key));
+  el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>parToggle(d.dataset.fkey));
+  const fx=$('#par-faixa'); if(fx) fx.addEventListener('change',()=>{S.cli.parFaixa=[...fx.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);render();});
   wirePorComprador(el);
   wirePlanoCells();
 }
@@ -1172,7 +1179,7 @@ async function init(){
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[]};
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
     S.compradorNome='';
     ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
     $('#f-busca').value='';
