@@ -952,12 +952,13 @@ function modalPedido(opts){
         itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
           <td class="num"><input type="number" data-qi="${i}" value="${int(x.qtd)}" min="0" style="width:74px;text-align:right"></td>
           <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
-          <td class="num">${money(x.custo_unit)}</td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
+          <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
           <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
         `</tbody></table></div><div class="count-line" style="text-align:right">Total: <b>${money(total())}</b> · ${itens.length} itens</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
     const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
     $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{ itens[+inp.dataset.qi].qtd=+inp.value||0; draw(); });
+    $('#pd-itens').querySelectorAll('[data-ci]').forEach(inp=>inp.onchange=()=>{ itens[+inp.dataset.ci].custo_unit=+inp.value||0; draw(); });
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }
   draw();

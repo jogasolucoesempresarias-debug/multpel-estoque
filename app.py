@@ -1002,6 +1002,7 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
 
         tit_bloco = ParagraphStyle('tb', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold', textColor=colors.white)
         corpo = ParagraphStyle('cb', parent=styles['Normal'], fontSize=7.6, textColor=colors.HexColor('#0a0e17'), leading=11.5)
+        cel_desc = ParagraphStyle('cd', parent=styles['Normal'], fontSize=6.3, leading=7.3, textColor=colors.HexColor('#0a0e17'))
 
         def _bloco(titulo, corpo_html):
             t = Table([[Paragraph(titulo, tit_bloco)], [Paragraph(corpo_html, corpo)]], colWidths=[18.6 * cm])
@@ -1061,7 +1062,7 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
             else:
                 qtde, un = (f"{int(q)}" if q else "—"), "UN"
             ipi = core._n(it.get("percipi"))
-            data.append([_i(it.get("codprod")), (str(it.get("descricao") or "")[:40]),
+            data.append([_i(it.get("codprod")), Paragraph(_e(str(it.get("descricao") or "")[:52]), cel_desc),
                          _e(it.get("embalagem") or "—"), un, _e(it.get("codfab") or "—"),
                          qtde, _m(it.get("custo_unit")),
                          (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
