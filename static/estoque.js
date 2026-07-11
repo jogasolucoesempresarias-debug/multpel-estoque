@@ -265,7 +265,7 @@ function renderRuptura(P){
     return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   // colunas em caixa (mesmo padrão da aba Produtos): mantém unidade e ACRESCENTA cx
   P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):null; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
-  const cols=[colCod,colProd,colForn,{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
+  const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},
     {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'valor',label:'Valor estoque',num:true,fmt:money},
@@ -324,7 +324,7 @@ function renderEstoqueZero(P){
   // impacto financeiro da ruptura (a custo): volume parado/mês + custo de repor até o alvo
   const vendaPerdida=comGiro.reduce((s,p)=>s+(p.giro_mes||0)*(p.custo_unit||0),0);
   const custoRepor=comGiro.reduce((s,p)=>s+(p.sugestao_compra||0)*(p.custo_unit||0),0);
-  const cols=[colCod,colProd,colForn,
+  const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
     {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'nunca':int(v)},
@@ -617,7 +617,11 @@ function renderFornecedores(P){
   const F=Object.values(g).map(o=>{const pv=o.venda/tvenda*100,pe=o.valor/tv*100,idx=pe>0?pv/pe:(pv>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
     let cl=(o.giro<=0&&o.venda<=0)?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
     return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,cl};}).sort((a,b)=>b.valor-a.valor);
+  // curva ABC do fornecedor por venda (Pareto do faturamento) — mesma leitura dos produtos
+  {const _tv=F.reduce((s,o)=>s+(o.venda||0),0)||1; let _ac=0;
+   [...F].sort((a,b)=>(b.venda||0)-(a.venda||0)).forEach(o=>{_ac+=(o.venda||0);const _p=_ac/_tv*100;o.curva_abc=_p<=80?'A':(_p<=95?'B':'C');});}
   const cols=[{key:'codfornec',label:'Cód',num:true},{key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod">${esc(v)}</span>`},
+    {key:'curva_abc',label:'ABC',badge:true},
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'venda',label:'Venda',num:true,fmt:money},{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
@@ -641,32 +645,40 @@ function renderFornecedores(P){
 }
 
 function renderRupturaComprador(P){
-  const g={};
-  P.forEach(p=>{const cc=p.codcomprador,chave=cc==null?0:cc;
-    const o=g[chave]=g[chave]||{cod:cc,nome:p.comprador||'Sem comprador',n:0,rupt:0,semped:0,perdida:0,repor:0};
-    o.n++;
-    if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
-      o.perdida+=(p.giro_mes||0)*(p.custo_unit||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
-  const rows0=Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0})).filter(o=>o.rupt>0||o.n>0);
-  const skk='ruptcomp', sk=S.sort[skk]||{key:'rupt',dir:-1};
-  const rows=[...rows0].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
-    if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
-  const ck=[{k:'nome',label:'Comprador'},{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},
-    {k:'pct',label:'% Rupt.',num:1},{k:'semped',label:'Sem pedido',num:1},
-    {k:'perdida',label:'Venda perdida/mês',num:1},{k:'repor',label:'Custo reposição',num:1}];
-  const totR=rows.reduce((s,r)=>s+r.rupt,0),totSem=rows.reduce((s,r)=>s+r.semped,0),
-    totP=rows.reduce((s,r)=>s+r.perdida,0),totC=rows.reduce((s,r)=>s+r.repor,0);
+  // agrega métricas de ruptura por uma chave (comprador OU curva ABC de venda)
+  function agrupa(keyFn,nomeFn){
+    const g={};
+    P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0};
+      o.n++;
+      if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
+        o.perdida+=(p.giro_mes||0)*(p.custo_unit||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
+    return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0})).filter(o=>o.n>0);
+  }
+  const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
+    {k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida/mês',num:1},{k:'repor',label:'Custo reposição',num:1}];
+  function tabela(rows0,skk,lbl0){
+    const sk=S.sort[skk]||{key:'rupt',dir:-1};
+    const rows=_sortArr(rows0,sk);
+    const ck=[{k:'nome',label:lbl0},...ckBase];
+    return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}</tbody></table></div>`;
+  }
+  const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
+  const porCurva=agrupa(p=>p.curva_abc||'C', (p,k)=>'Curva '+k);
+  const totR=porComp.reduce((s,r)=>s+r.rupt,0),totSem=porComp.reduce((s,r)=>s+r.semped,0),
+    totP=porComp.reduce((s,r)=>s+r.perdida,0),totC=porComp.reduce((s,r)=>s+r.repor,0);
   $('#v-ruptura_comprador').innerHTML=head('Ruptura por comprador','ruptura_comprador')+
     `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
        ${kpi('Itens em ruptura',int(totR),int(totSem)+' sem pedido',C.red)}
        ${kpi('Venda perdida/mês',money(totP),'potencial não atendido',C.orange)}
        ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
-       ${kpi('Compradores',int(rows.length),'',C.accent2)}
+       ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
      <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). "Venda perdida/mês" = giro mensal × custo. "Custo reposição" = sugestão × custo.</div>
-     <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-     <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura no filtro 🎉</td></tr>'}</tbody></table></div>`;
-  $('#v-ruptura_comprador').querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skk]||{};S.sort[skk]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
+     <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
+     <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões)</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC')}</div>`;
+  wireSortTbl($('#rc-comp'),'ruptcomp',render);
+  wireSortTbl($('#rc-curva'),'ruptcurva',render);
 }
 
 function renderProdutos(P){
@@ -740,7 +752,7 @@ function renderComprasVendas(P){
   let html=`<h2 class="section"><span>Compras × Vendas — ${({comprador:'por comprador',fornecedor:'por fornecedor',produto:'por produto'})[dim]}</span>${exportBtns(expv)}</h2>
     <div class="count-line" style="display:flex;justify-content:space-between;align-items:center">${seg}<span>Estoque = capital em compras · Venda/Lucro/Margem = realizado no período (${({mes:'mês',['90d']:'90d',['6m']:'6m',['12m']:'12m'})[S.vperiodo]})</span></div>`;
   if(dim==='produto'){
-    const cols=[colCod,colProd,colForn,{key:'comprador',label:'Comprador',fmt:v=>esc((v||'').split(' ')[0]||'—')},
+    const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'comprador',label:'Comprador',fmt:v=>esc((v||'').split(' ')[0]||'—')},
       {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'venda',label:'Venda R$',num:true,fmt:money},
       {key:'lucro',label:'Lucro R$',num:true,fmt:money},{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
       colGiroSpark,{key:'cobertura',label:'Cob.',num:true,fmt:cob}];

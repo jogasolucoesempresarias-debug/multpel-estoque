@@ -554,7 +554,7 @@ _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
                  "qtdisp", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
                  "valor", "venda", "lucro", "margem", "status_abast", "status_parado"],
-    "comprasvendas": ["codprod", "descricao", "fornecedor", "comprador", "valor", "venda",
+    "comprasvendas": ["codprod", "descricao", "fornecedor", "curva_abc", "comprador", "valor", "venda",
                       "lucro", "margem", "giro_mes", "cobertura", "dias_sem_venda"],
     "reposicao": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "giro_mes",
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
@@ -646,7 +646,7 @@ def _export_data(view):
         fc = request.args.get("forn_classe")
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
-        cols = ["codfornec", "fornecedor", "comprador", "n_produtos", "valor", "giro", "cobertura",
+        cols = ["codfornec", "fornecedor", "curva_abc", "comprador", "n_produtos", "valor", "giro", "cobertura",
                 "venda", "lucro", "margem", "perc_venda", "perc_estoque", "indice", "classificacao"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()

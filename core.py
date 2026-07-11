@@ -661,6 +661,10 @@ def fornecedores(produtos, params=None):
             "perc_estoque": _round(perc_est, 2),
             "indice": _round(indice, 2), "classificacao": classif,
         })
+    # curva ABC do FORNECEDOR por venda (Pareto do faturamento) — mesma leitura dos produtos
+    _a = params["abc_a"] if params else DEFAULTS["abc_a"]
+    _b = params["abc_b"] if params else DEFAULTS["abc_b"]
+    _aplicar_curva(saida, "venda", "curva_abc", _a, _b)
     saida.sort(key=lambda x: x["valor"], reverse=True)
     return saida
 
