@@ -12,7 +12,7 @@ const PREF = 'multpel_estoque_prefs';
 
 const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
-  filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador',
+  filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
@@ -44,7 +44,8 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento','logistica'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+// aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
 const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
@@ -233,15 +234,16 @@ function renderCockpit(P){
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
    <div class="row">
-     <div class="panel grow"><h3>Curva ABC (vendas)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
-       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(k.abc[c].venda)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.venda_total?k.abc[c].venda/k.venda_total*100:0,0)}% da venda</td></tr>`).join('')}</table>
+     <div class="panel grow"><h3>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'}) <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
+       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>{const _v=S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda,_t=S.abcLens==='estoque'?k.valor_total:k.venda_total;return `<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(_v)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(_t?_v/_t*100:0,0)}% ${S.abcLens==='estoque'?'do estoque':'da venda'}</td></tr>`;}).join('')}</table>
      </div>
    </div>
    <div class="row">
      <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
    </div>`;
-  chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+  chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+  document.querySelectorAll('[data-abclens]').forEach(b=>b.onclick=()=>{S.abcLens=b.dataset.abclens;render();});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
   const topVen=(S.validade?.lotes||[]).slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
   $('#cp-parado').innerHTML=topPar.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)}</span><span class="lr-r">${money(p.valor)}<br><small class="muted">${p.dias_sem_venda==null?'sem saída':p.dias_sem_venda+'d s/ venda'}</small></span></div>`).join('')||'<div class="empty">Nada parado 🎉</div>';
