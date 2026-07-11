@@ -638,7 +638,7 @@ def _export_data(view):
                 linhas = [l for l in linhas if lo_i <= l["dias_para_vencer"] <= hi_i]
             except ValueError:
                 pass
-        cols = ["codprod", "descricao", "comprador", "fornecedor", "numlote", "dtval",
+        cols = ["codprod", "descricao", "curva_abc", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
         produtos, params, _ = _build_produtos()
@@ -1052,12 +1052,13 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
 
         header = ["Cód", "Descrição", "Embalagem", "Un", "Cód.Fab", "Qtde", "Custo un.", "IPI %", "Vlr. Total"]
         data = [header]
-        total = 0.0
+        total = 0.0; total_kg = 0.0
         for it in itens:
             total += core._n(it.get("valor"))
             cx = core._n(it.get("qtunitcx")); q = core._n(it.get("qtd"))
             if cx > 1 and q > 0:
                 qtde, un = f"{int(math.ceil(q / cx))}", "CX"
+                total_kg += math.ceil(q / cx) * core._n(it.get("peso_caixa"))
             else:
                 qtde, un = (f"{int(q)}" if q else "—"), "UN"
             ipi = core._n(it.get("percipi"))
@@ -1085,6 +1086,9 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
             ('SPAN', (0, -1), (6, -1)),
         ]))
         story.append(tbl)
+        story.append(Spacer(1, 0.2 * cm))
+        _kg = f" &nbsp;·&nbsp; Peso total estimado: <b>{_i(total_kg)} kg</b>" if total_kg > 0 else ""
+        story.append(Paragraph(f"Total do pedido: <b>{_m(total)}</b> &nbsp;·&nbsp; {len(itens)} itens{_kg}", info_style))
         doc.build(story, canvasmaker=_NumCanvas)
     else:
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.6 * cm, rightMargin=1.6 * cm,
@@ -1131,6 +1135,7 @@ def api_pedido_pdf(pid):
             it["percipi"] = c.get("PERCIPI")
             # embalagem = a da CAIXA (PCEMBALAGEM, igual à tela do Abastecimento); fallback no cadastro
             it["embalagem"] = (emb_map.get(cod) or {}).get("embalagem") or c.get("EMBALAGEM")
+            it["peso_caixa"] = (emb_map.get(cod) or {}).get("pesobruto")
     # dados do fornecedor (PCFORNEC) p/ o bloco do cabeçalho
     forn = None
     if pe.get("codfornec") not in (None, ""):

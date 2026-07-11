@@ -388,14 +388,15 @@ function renderReposicao(P){
   const suspensos=P.filter(p=>p.compra_suspensa).sort((a,b)=>(b.sugestao_compra*b.custo_unit)-(a.sugestao_compra*a.custo_unit));
   // agrupa por fornecedor (+ cubagem do pedido sugerido = Σ caixas sugeridas × volume da caixa)
   const cubItem=p=>(p.sugestao_cx||0)*(p.cubagem_caixa_m3||0);
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,cub:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p);});
+  const pesoItem=p=>(p.sugestao_cx||0)*(p.peso_caixa_kg||0);
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
   const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
     `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
-        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}</small></span>
+        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">m³</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
@@ -452,6 +453,7 @@ async function renderPlano(){
 function renderValidade(){
   const L=lotesFiltrados();
   const cols=[colCod,{key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`},
+    {key:'curva_abc',label:'ABC',badge:true},
     {key:'numlote',label:'Lote'},{key:'dtval',label:'Validade',fmt:dt},{key:'dias_para_vencer',label:'Dias',num:true},
     {key:'qt',label:'Qtd',num:true,fmt:int},{key:'saldo_proj',label:'Saldo proj.',num:true,fmt:int},
     {key:'valor_risco',label:'Valor risco',num:true,fmt:money},{key:'classificacao',label:'Classe',badge:true},
@@ -570,7 +572,7 @@ function renderParado(P){
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
   P.forEach(p=>{const cx=p.caixa||1; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
-  const cols=[colCod,colProd,colForn,{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
+  const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
     {key:'dias_sem_venda',label:'Dias parado',num:true,fmt:v=>v==null?'nunca':int(v)},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},
     {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
@@ -660,8 +662,10 @@ function renderRupturaComprador(P){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
     const ck=[{k:'nome',label:lbl0},...ckBase];
+    const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor}),{n:0,rupt:0,semped:0,perdida:0,repor:0});
+    const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${int(T.semped)}</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
     return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}</tbody></table></div>`;
+      <tbody>${rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
   }
   const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
   const porCurva=agrupa(p=>p.curva_abc||'C', (p,k)=>'Curva '+k);
@@ -767,7 +771,9 @@ function renderComprasVendas(P){
       // ruptura = critério oficial (estoque<=0 & giro>0); cobertura baixa é atenção, não ruptura
       if((p.qtdisp<=0)&&(p.giro_dia>0))o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
     const rows0=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null,pct_rupt:o.n?o.rupt/o.n*100:0}));
-    const ck=[{k:'nome',label:dim==='fornecedor'?'Fornecedor':'Comprador'},{k:'n',label:'Itens',num:1},
+    if(dim==='fornecedor'){const _tv=rows0.reduce((s,o)=>s+(o.venda||0),0)||1;let _ac=0;   // curva ABC do fornecedor por venda
+      [...rows0].sort((a,b)=>(b.venda||0)-(a.venda||0)).forEach(o=>{_ac+=(o.venda||0);const _p=_ac/_tv*100;o.curva_abc=_p<=80?'A':(_p<=95?'B':'C');});}
+    const ck=[{k:'nome',label:dim==='fornecedor'?'Fornecedor':'Comprador'},...(dim==='fornecedor'?[{k:'curva_abc',label:'ABC',badge:1}]:[]),{k:'n',label:'Itens',num:1},
       {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
       {k:'margem',label:'Margem',num:1},{k:'turn',label:'Venda/Estoque',num:1},{k:'rupt',label:'Ruptura',num:1},{k:'pct_rupt',label:'% Rupt.',num:1},{k:'parado',label:'Parado R$',num:1}];
     const skk='cv_'+dim, sk=S.sort[skk]||{key:'venda',dir:-1};
@@ -778,7 +784,7 @@ function renderComprasVendas(P){
       ${kpi('Estoque (compras)',money(totE),'',C.accent)}${kpi('Venda',money(totV),'',C.green)}
       ${kpi('Lucro',money(totL),'',C.accent2)}${kpi('Margem',totV?dec(totL/totV*100,1)+'%':'—','',C.purple)}</div>`;
     html+=`<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead><tbody>`+
-      rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct_rupt||0,1)}%</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
+      rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td>${dim==='fornecedor'?`<td>${badge(r.curva_abc)}</td>`:''}<td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct_rupt||0,1)}%</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
       `</tbody></table></div><div class="count-line">${rows.length} ${dim==='fornecedor'?'fornecedores':'compradores'} · "Venda/Estoque" = quantas vezes o capital girou no período.</div>`;
     el.innerHTML=html;
     el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skk]||{};S.sort[skk]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
