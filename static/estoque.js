@@ -138,8 +138,8 @@ function agg(P){
   const zerados=P.filter(p=>p.estoque_zero&&(p.giro_dia||0)>0);   // ruptura real (estoque ≤ 0 e giro > 0)
   const faixas=FAIXAS.map(([n,lo,hi])=>{const it=comGiro.filter(p=>p.cobertura!=null&&Math.ceil(p.cobertura)>=lo&&Math.ceil(p.cobertura)<=hi);return{faixa:n,qt:it.length,valor:sum(it,p=>p.valor)};});
   faixas.push({faixa:'sem giro',qt:semGiro.length,valor:sum(semGiro,p=>p.valor)});
-  const abc={}; ['A','B','C'].forEach(c=>{const it=P.filter(p=>p.curva_abc===c);abc[c]={qt:it.length,valor:sum(it,p=>p.valor)};});
-  const matriz={}; P.forEach(p=>{if(p.abc_xyz){(matriz[p.abc_xyz]=matriz[p.abc_xyz]||{qt:0,valor:0});matriz[p.abc_xyz].qt++;matriz[p.abc_xyz].valor+=(p.valor||0);}});
+  const abc={}; ['A','B','C'].forEach(c=>{const it=P.filter(p=>p.curva_abc===c);abc[c]={qt:it.length,valor:sum(it,p=>p.valor),venda:sum(it,p=>p.venda)};});
+  const matriz={}; P.forEach(p=>{if(p.abc_xyz){(matriz[p.abc_xyz]=matriz[p.abc_xyz]||{qt:0,valor:0,venda:0});matriz[p.abc_xyz].qt++;matriz[p.abc_xyz].valor+=(p.valor||0);matriz[p.abc_xyz].venda+=(p.venda||0);}});
   const cnt=(fld,v)=>{const it=P.filter(p=>p[fld]===v);return{qt:it.length,valor:sum(it,p=>p.valor)};};
   const venda_total=sum(P,p=>p.venda), lucro_total=sum(P,p=>p.lucro);
   return {valor_total,venda_total,lucro_total,margem_total: venda_total?lucro_total/venda_total*100:null,
@@ -233,15 +233,15 @@ function renderCockpit(P){
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
    <div class="row">
-     <div class="panel grow"><h3>Curva ABC (valor em estoque)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
-       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(k.abc[c].valor)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.valor_total?k.abc[c].valor/k.valor_total*100:0,0)}% do valor</td></tr>`).join('')}</table>
+     <div class="panel grow"><h3>Curva ABC (vendas)</h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
+       <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>`<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(k.abc[c].venda)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(k.venda_total?k.abc[c].venda/k.venda_total*100:0,0)}% da venda</td></tr>`).join('')}</table>
      </div>
    </div>
    <div class="row">
      <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
    </div>`;
-  chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].valor),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+  chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
   const topVen=(S.validade?.lotes||[]).slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
   $('#cp-parado').innerHTML=topPar.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)}</span><span class="lr-r">${money(p.valor)}<br><small class="muted">${p.dias_sem_venda==null?'sem saída':p.dias_sem_venda+'d s/ venda'}</small></span></div>`).join('')||'<div class="empty">Nada parado 🎉</div>';
@@ -596,11 +596,11 @@ function renderParado(P){
 }
 
 function renderABCXYZ(P){
-  const m={}; P.forEach(p=>{if(p.abc_xyz){(m[p.abc_xyz]=m[p.abc_xyz]||{qt:0,valor:0});m[p.abc_xyz].qt++;m[p.abc_xyz].valor+=(p.valor||0);}});
+  const m={}; P.forEach(p=>{if(p.abc_xyz){(m[p.abc_xyz]=m[p.abc_xyz]||{qt:0,venda:0});m[p.abc_xyz].qt++;m[p.abc_xyz].venda+=(p.venda||0);}});
   const grid=`<div class="matrix"><div></div><div class="mh">X · estável</div><div class="mh">Y · variável</div><div class="mh">Z · errático</div>`+
-    ['A','B','C'].map(a=>`<div class="mh">${a}</div>`+['X','Y','Z'].map(x=>{const k=a+x,d=m[k];return d&&d.qt?`<div class="mcell" data-key="${k}"><div class="mc-key">${k}</div><div class="mc-qt">${int(d.qt)}</div><div class="mc-val">${moneyK(d.valor)}</div></div>`:`<div class="mcell empty"><div class="mc-key">${k}</div><div class="mc-qt">0</div></div>`;}).join('')).join('')+`</div>`;
+    ['A','B','C'].map(a=>`<div class="mh">${a}</div>`+['X','Y','Z'].map(x=>{const k=a+x,d=m[k];return d&&d.qt?`<div class="mcell" data-key="${k}"><div class="mc-key">${k}</div><div class="mc-qt">${int(d.qt)}</div><div class="mc-val">${moneyK(d.venda)}</div></div>`:`<div class="mcell empty"><div class="mc-key">${k}</div><div class="mc-qt">0</div></div>`;}).join('')).join('')+`</div>`;
   $('#v-abcxyz').innerHTML=`<h2 class="section"><span>Matriz ABC-XYZ</span></h2>
-    <div class="row"><div class="panel"><h3>Valor (ABC) × Variabilidade da demanda (XYZ)</h3>${grid}<div class="count-line" style="margin-top:14px">AX = controle rígido · CZ = candidatos a descontinuar. Clique para listar em Produtos.</div></div>
+    <div class="row"><div class="panel"><h3>Curva de vendas (ABC) × Variabilidade da demanda (XYZ)</h3>${grid}<div class="count-line" style="margin-top:14px">Valor = <b>venda</b> do período. AX = campeão previsível (controle rígido) · CZ = candidatos a descontinuar. Clique para listar em Produtos.</div></div>
     <div class="panel grow"><h3>Estratégia</h3>
      <div class="lote-row"><b>A·X/Y</b><span class="lr-r">Nunca faltar. Reposição automática.</span></div>
      <div class="lote-row"><b>A·Z</b><span class="lr-r">Alto valor, demanda imprevisível. Monitorar.</span></div>

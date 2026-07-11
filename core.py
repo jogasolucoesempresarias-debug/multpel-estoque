@@ -485,7 +485,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "curva_abc": None, "curva_giro": None, "abc_xyz": None,
         })
 
-    _aplicar_curva(out, "valor", "curva_abc", params["abc_a"], params["abc_b"])
+    # curva ABC por VENDA (faturamento do período selecionado) — leitura clássica: A = campeões
+    # de venda. Segue o seletor de período (o campo `venda` já é do período). O valor de estoque
+    # continua nas visões de capital (Cobertura/Parado/Fornecedores) e `curva_giro` é outra lente.
+    _aplicar_curva(out, "venda", "curva_abc", params["abc_a"], params["abc_b"])
     _aplicar_curva(out, "giro_mes", "curva_giro", params["abc_a"], params["abc_b"])
     for p in out:
         if p["curva_abc"] and p["xyz"]:
@@ -535,16 +538,18 @@ def cockpit(produtos):
     abc = {}
     for c in ("A", "B", "C"):
         itens = [p for p in produtos if p["curva_abc"] == c]
-        abc[c] = {"qt": len(itens), "valor": _round(sum(p["valor"] or 0 for p in itens))}
+        abc[c] = {"qt": len(itens), "valor": _round(sum(p["valor"] or 0 for p in itens)),
+                  "venda": _round(sum(p["venda"] or 0 for p in itens))}
 
     matriz = {}
     for p in produtos:
         if p["abc_xyz"]:
-            cell = matriz.setdefault(p["abc_xyz"], {"qt": 0, "valor": 0.0})
+            cell = matriz.setdefault(p["abc_xyz"], {"qt": 0, "valor": 0.0, "venda": 0.0})
             cell["qt"] += 1
             cell["valor"] += (p["valor"] or 0)
+            cell["venda"] += (p["venda"] or 0)
     for v in matriz.values():
-        v["valor"] = _round(v["valor"])
+        v["valor"] = _round(v["valor"]); v["venda"] = _round(v["venda"])
 
     def _cont(field, val):
         itens = [p for p in produtos if p[field] == val]
