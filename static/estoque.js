@@ -174,6 +174,12 @@ const colProd={key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title=
 const colForn={key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v||'—')}</span>`};
 const colGiroSpark={key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${int(p.giro_mes)} ${spark(p.serie_giro)}`};
 
+// ── ordenação clicável p/ tabelas montadas na mão (headers com data-k) ──
+function _sortArr(rows,sk){ return [...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
+  if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y)); return sk.dir*(x-y);}); }
+function sortTh(cols,sk){ return cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join(''); }
+function wireSortTbl(container,skKey,onChange){ if(!container)return; container.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skKey]||{};S.sort[skKey]={key:k,dir:cur.key===k?-cur.dir:-1};onChange();}); }
+
 function exportQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
   if(f.comprador) p.set('comprador_cod',f.comprador);
@@ -766,16 +772,25 @@ function renderComprasVendas(P){
 const PRAZO_BADGE={atrasado:['Atrasado','#ef4444'],chega_7:['Chega ≤7d','#f97316'],no_prazo:['No prazo','#22c55e'],recebido:['Recebido','#22c55e'],sem_prev:['Sem previsão','#64748b']};
 const prazoBadge=v=>{const s=PRAZO_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
 
-async function renderOrcamento(){
+async function renderOrcamento(useCache){
   const el=$('#v-orcamento');
   const comp=S.compradorNome||'TODOS';
-  el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
-  let o; try{ o=await getJSON('/api/orcamento?comprador='+encodeURIComponent(comp)); }
-  catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
-  S.orcamento=o; const r=o.resumo;
+  let o=useCache?S.orcamento:null;
+  if(!o){ el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
+    try{ o=await getJSON('/api/orcamento?comprador='+encodeURIComponent(comp)); }
+    catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
+    S.orcamento=o; }
+  const r=o.resumo;
   const prog=r.pct_consumido!=null?Math.min(100,r.pct_consumido*100):0;
   const cor=prog>=100?C.red:(prog>=85?C.orange:C.green);
   const abertos=o.abertos||[], manuais=o.manuais||[];
+  // ordenação clicável (mantém a ordem do servidor até o 1º clique)
+  const skC=S.sort['orc_comp'], pcS=skC?_sortArr(o.por_comprador||[],skC):(o.por_comprador||[]);
+  const colsC=[{k:'comprador',label:'Comprador'},{k:'meta',label:'Meta',num:1},{k:'comprado',label:'Comprado',num:1},{k:'aberto',label:'Aberto',num:1},{k:'saldo',label:'Saldo',num:1},{k:'pct_consumido',label:'Consumido',num:1}];
+  const skA=S.sort['orc_abertos'], abertosS=skA?_sortArr(abertos,skA):abertos;
+  const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}];
+  const skM=S.sort['orc_manuais'], manuaisS=skM?_sortArr(manuais,skM):manuais;
+  const colsM=[{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'n_pedido',label:'Pedido'},{k:'valor',label:'Valor',num:1}];
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}</span>
       <span><button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
     <div class="kpi-grid">
@@ -786,22 +801,25 @@ async function renderOrcamento(){
     </div>
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
       <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).</div></div>
-    ${(o.por_comprador||[]).length?`<div class="panel"><h3>Orçamento por comprador <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Meta</th><th class="num">Comprado</th><th class="num">Aberto</th><th class="num">Saldo</th><th class="num">Consumido</th></tr></thead>
-      <tbody>${o.por_comprador.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+    ${pcS.length?`<div class="panel" id="orc-comp"><h3>Orçamento por comprador <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
+      <div class="tbl-wrap"><table><thead><tr>${sortTh(colsC,skC||{})}</tr></thead>
+      <tbody>${pcS.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
     ${(r.n_atrasados||r.n_chega7)?`<div class="alerts">
       ${r.n_atrasados?alertCard(r.n_atrasados,'Entregas atrasadas',sum2(abertos.filter(p=>p.status_prazo==='atrasado'),'valor_aberto'),C.red,'orcamento',{}):''}
       ${r.n_chega7?alertCard(r.n_chega7,'Chegam em ≤7 dias',sum2(abertos.filter(p=>p.status_prazo==='chega_7'),'valor_aberto'),C.orange,'orcamento',{}):''}
     </div>`:''}
-    <div class="panel"><h3>Acompanhamento de pedidos em aberto <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
-      ${abertos.length?`<div class="tbl-wrap"><table><thead><tr><th>Nº</th><th>Data</th><th>Fornecedor</th><th>Comprador</th><th class="num">Valor</th><th class="num">A entregar</th><th>Previsão entrega</th><th>Status</th></tr></thead>
-      <tbody>${abertos.map(pe=>`<tr><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+    <div class="panel" id="orc-abertos"><h3>Acompanhamento de pedidos em aberto <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
+      ${abertos.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsA,skA||{})}</tr></thead>
+      <tbody>${abertosS.map(pe=>`<tr><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>
-    ${manuais.length?`<div class="panel" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Pedido</th><th class="num">Valor</th><th></th></tr></thead>
-      <tbody>${manuais.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
+    ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
+      <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
+      <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor).</div></div>`:''}`;
   $('#btn-pedido').onclick=()=>modalPedido(null);
+  wireSortTbl($('#orc-comp'),'orc_comp',()=>renderOrcamento(true));
+  wireSortTbl($('#orc-abertos'),'orc_abertos',()=>renderOrcamento(true));
+  wireSortTbl($('#orc-manuais'),'orc_manuais',()=>renderOrcamento(true));
   el.querySelectorAll('[data-delped]').forEach(b=>b.onclick=async()=>{ await postJSON('/api/pedidos/'+b.dataset.delped,{}, 'DELETE'); toast('Pedido removido'); renderOrcamento(); });
 }
 function sum2(arr,key){ key=key||'valor'; return arr.reduce((s,p)=>s+(p[key]||0),0); }
@@ -880,12 +898,16 @@ function renderGerencial(P){
 const OCUP_BADGE={baixa:['Baixa ocupação','#f97316'],media:['Ocupação média','#eab308'],ok:['OK','#22c55e'],sem_cubagem:['Sem cubagem','#64748b']};
 const ocupBadge=v=>{const s=OCUP_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
 
-async function renderLogistica(){
+async function renderLogistica(useCache){
   const el=$('#v-logistica');
-  el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
-  let o; try{ o=await getJSON('/api/logistica?'+serverQS()); }
-  catch(e){ el.innerHTML=`<div class="empty">Logística indisponível: ${e.message}</div>`; return; }
-  const r=o.resumo, ps=o.pedidos||[];
+  let o=useCache?S.logistica:null;
+  if(!o){ el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
+    try{ o=await getJSON('/api/logistica?'+serverQS()); }
+    catch(e){ el.innerHTML=`<div class="empty">Logística indisponível: ${e.message}</div>`; return; }
+    S.logistica=o; }
+  const r=o.resumo, ps0=o.pedidos||[];
+  const skL=S.sort['logistica'], ps=skL?_sortArr(ps0,skL):ps0;
+  const colsL=[{k:'numped',label:'Nº',num:1},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'skus',label:'SKUs',num:1},{k:'caixas',label:'Caixas',num:1},{k:'cubagem_m3',label:'Cubagem m³',num:1},{k:'ocupacao',label:'Ocupação',num:1},{k:'valor_aberto',label:'Valor',num:1},{k:'dt_previsao',label:'Previsão'},{k:'status',label:'Status'}];
   el.innerHTML=`<h2 class="section"><span>Logística de pedidos — cubagem &amp; ocupação</span></h2>
     <div class="kpi-grid">
       ${kpi('Pedidos em aberto',int(r.n_pedidos),moneyK(r.valor_total)+' a entregar',C.accent)}
@@ -894,9 +916,10 @@ async function renderLogistica(){
     </div>
     <div class="count-line">Ocupação estimada = cubagem (Σ qtd em aberto × volume unitário) ÷ capacidade do veículo (${int(r.capacidade_m3)} m³). Baixa ocupação = candidato a consolidação de carga.</div>
     <div class="panel">
-      ${ps.length?`<div class="tbl-wrap"><table><thead><tr><th>Nº</th><th>Fornecedor</th><th>Comprador</th><th class="num">SKUs</th><th class="num">Caixas</th><th class="num">Cubagem m³</th><th class="num">Ocupação</th><th class="num">Valor</th><th>Previsão</th><th>Status</th></tr></thead>
+      ${ps.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsL,skL||{})}</tr></thead>
       <tbody>${ps.map(p=>`<tr><td class="num">${p.numped}</td><td><span class="prod">${esc(p.fornecedor||'')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.skus)}</td><td class="num">${int(p.caixas)}</td><td class="num">${dec(p.cubagem_m3,2)}</td><td class="num">${p.ocupacao!=null?pct(p.ocupacao):'—'}</td><td class="num">${money(p.valor_aberto)}</td><td>${dt(p.dt_previsao)}</td><td>${ocupBadge(p.status)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>`;
+  wireSortTbl($('#v-logistica'),'logistica',()=>renderLogistica(true));
 }
 
 /* ───────── planos de ação (inline) ───────── */
