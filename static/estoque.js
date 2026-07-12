@@ -102,11 +102,11 @@ async function loadData(){
 }
 
 /* ───────── filtros client-side ───────── */
-function filtered(){
+function filtered(skipCurva){
   const f=S.cli, b=f.busca.trim().toLowerCase();
   return S.produtosAll.filter(p=>{
     if(f.comprador && String(p.codcomprador)!==f.comprador) return false;
-    if(f.curva && p.curva_abc!==f.curva) return false;
+    if(!skipCurva && f.curva && p.curva_abc!==f.curva) return false;
     if(f.xyz && p.xyz!==f.xyz) return false;
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
@@ -613,8 +613,11 @@ function renderABCXYZ(P){
 }
 
 function renderFornecedores(P){
-  const tv=P.reduce((s,p)=>s+(p.valor||0),0)||1,tvenda=P.reduce((s,p)=>s+(p.venda||0),0)||1,g={};
-  P.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
+  // Opção A: nesta aba o filtro "Curva" age pela ABC do FORNECEDOR (não do produto).
+  // Agrega ignorando a curva do produto (filtered(true)) e filtra os fornecedores por ABC no fim.
+  const base=filtered(true);
+  const tv=base.reduce((s,p)=>s+(p.valor||0),0)||1,tvenda=base.reduce((s,p)=>s+(p.venda||0),0)||1,g={};
+  base.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
   const lead=S.params.lead||10;
   // índice = % na VENDA (R$) ÷ % no ESTOQUE (R$) — "vende mais do que pesa". Antes usava giro em
   // unidades, distorcendo fornecedor de alto valor/baixo volume.
@@ -632,7 +635,8 @@ function renderFornecedores(P){
     {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pv',label:'% venda',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
   const CLS={alta_performance:'Alta performance',equilibrado:'Equilibrado',estoque_alto:'Estoque alto',ruptura:'Ruptura',critico_sem_giro:'Crítico s/ giro'};
-  const Ff=S.cli.fornClasse?F.filter(r=>r.cl===S.cli.fornClasse):F;
+  const Fabc=S.cli.curva?F.filter(r=>r.curva_abc===S.cli.curva):F;   // filtro Curva = ABC do fornecedor
+  const Ff=S.cli.fornClasse?Fabc.filter(r=>r.cl===S.cli.fornClasse):Fabc;
   const sk=S.sort['fornecedores']||{key:'valor',dir:-1};
   const rows=[...Ff].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(typeof x==='string')return sk.dir*x.localeCompare(y);return sk.dir*((x||0)-(y||0));});
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}</th>`).join('');
@@ -766,8 +770,9 @@ function renderComprasVendas(P){
     html+=renderTable(P,cols,'comprasvendas');
     el.innerHTML=html;
   } else {
+    const base=dim==='fornecedor'?filtered(true):P;   // Opção A: em "por fornecedor" a Curva filtra pela ABC do fornecedor
     const g={};
-    P.forEach(p=>{const key=dim==='fornecedor'?p.codfornec:p.codcomprador; if(key==null)return;
+    base.forEach(p=>{const key=dim==='fornecedor'?p.codfornec:p.codcomprador; if(key==null)return;
       const nome=dim==='fornecedor'?(p.fornecedor||'Forn '+key):(p.comprador||'Sem comprador');
       const o=g[key]=g[key]||{key,nome,n:0,estoque:0,venda:0,lucro:0,giro:0,rupt:0,parado:0};
       o.n++; o.estoque+=(p.valor||0); o.venda+=(p.venda||0); o.lucro+=(p.lucro||0); o.giro+=(p.giro_mes||0);
@@ -780,7 +785,8 @@ function renderComprasVendas(P){
       {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
       {k:'margem',label:'Margem',num:1},{k:'turn',label:'Venda/Estoque',num:1},{k:'rupt',label:'Ruptura',num:1},{k:'pct_rupt',label:'% Rupt.',num:1},{k:'parado',label:'Parado R$',num:1}];
     const skk='cv_'+dim, sk=S.sort[skk]||{key:'venda',dir:-1};
-    const rows=[...rows0].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
+    const rows0f=(dim==='fornecedor'&&S.cli.curva)?rows0.filter(o=>o.curva_abc===S.cli.curva):rows0;
+    const rows=[...rows0f].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
       if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
     const totE=rows.reduce((s,r)=>s+r.estoque,0),totV=rows.reduce((s,r)=>s+r.venda,0),totL=rows.reduce((s,r)=>s+r.lucro,0);
     html+=`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">

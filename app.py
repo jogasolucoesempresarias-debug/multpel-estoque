@@ -567,9 +567,11 @@ _CSV_COLS = {
 }
 
 
-def _aplicar_filtros_cliente(produtos):
+def _aplicar_filtros_cliente(produtos, skip=()):
     """Aplica os filtros ativos da UI (mesma lógica do filtered() do front) p/ que os exports
-    respeitem o que está na tela. Lê os params da querystring (enviados pelo exportQS)."""
+    respeitem o que está na tela. Lê os params da querystring (enviados pelo exportQS).
+    `skip` pula filtros específicos (ex.: {"curva"} nas visões por fornecedor, onde a Curva
+    filtra pela ABC do FORNECEDOR e não do produto — Opção A)."""
     a = request.args
 
     def g(k):
@@ -580,7 +582,7 @@ def _aplicar_filtros_cliente(produtos):
     cc = g("comprador_cod")
     if cc:
         out = [p for p in out if str(p.get("codcomprador")) == cc]
-    if g("curva"):
+    if "curva" not in skip and g("curva"):
         out = [p for p in out if p.get("curva_abc") == g("curva")]
     if g("xyz"):
         out = [p for p in out if p.get("xyz") == g("xyz")]
@@ -642,7 +644,12 @@ def _export_data(view):
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
         produtos, params, _ = _build_produtos()
-        linhas = core.fornecedores(_aplicar_filtros_cliente(produtos), params)
+        # Opção A: a Curva filtra pela ABC do FORNECEDOR (pula a curva do produto e filtra o
+        # resultado agregado por curva_abc do fornecedor) — igual à tela.
+        linhas = core.fornecedores(_aplicar_filtros_cliente(produtos, skip={"curva"}), params)
+        _cv = request.args.get("curva")
+        if _cv:
+            linhas = [r for r in linhas if r.get("curva_abc") == _cv]
         fc = request.args.get("forn_classe")
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
