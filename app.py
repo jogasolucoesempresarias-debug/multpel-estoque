@@ -476,6 +476,7 @@ def api_validade():
     resumo = {
         "n": len(fefo),
         "valor_risco": core._round(sum(l["valor_risco"] or 0 for l in fefo)),
+        "valor_risco_critico": core._round(sum(l["valor_risco"] or 0 for l in fefo if l["classificacao"] == "critico")),
         "critico": sum(1 for l in fefo if l["classificacao"] == "critico"),
         "atencao": sum(1 for l in fefo if l["classificacao"] == "atencao"),
         "planejar": sum(1 for l in fefo if l["classificacao"] == "planejar"),

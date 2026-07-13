@@ -230,7 +230,7 @@ function renderCockpit(P){
      ${alertCard(k.ruptura.zerados,'Em ruptura (estoque ≤ 0)',k.ruptura.valor_zerados,C.red,'estoque_zero',{})}
      ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{cobFaixa:'0-30'})}
      ${alertCard(k.repor.n,'Comprar (cobertura baixa)',k.repor.valor,C.orange,'reposicao',{})}
-     ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco,C.yellow,'validade',{})}
+     ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco_critico!=null?v.valor_risco_critico:v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
    <div class="row">
