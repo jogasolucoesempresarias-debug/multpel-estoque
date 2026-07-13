@@ -57,7 +57,7 @@ body {
 }
 /* cada grupo mantém tamanho natural e quebra de linha (não sobrepõe o vizinho) */
 .fb-group { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; min-width: 0; }
-.fb-group label { font-size: .64rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: .5px; padding-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.fb-group label { font-size: .64rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; padding-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .fb-control, select, input[type=text], input[type=number], input[type=date] {
   background: var(--surface2); border: 1px solid var(--border); color: var(--text);
   padding: 7px 10px; border-radius: 7px; font-family: inherit; font-size: .8rem; outline: none;
@@ -237,7 +237,7 @@ td .prod { max-width: 210px; overflow: hidden; text-overflow: ellipsis; display:
 
 /* comprador selector na topbar */
 .comprador-box { display: flex; align-items: center; gap: 8px; margin-left: auto; margin-right: 18px; }
-.comprador-box label { font-size: .68rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: .5px; }
+.comprador-box label { font-size: .68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
 .comprador-box select { min-width: 200px; font-weight: 600; }
 
 /* segmented toggle */
