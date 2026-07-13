@@ -386,10 +386,10 @@ def _build_produtos():
 
 
 def _preco_venda_map(filiais):
-    """{cod: preço de venda unitário} — realizado médio dos ÚLTIMOS 12 MESES (RCA), janela FIXA
-    (independe do filtro de período), p/ a 'venda perdida' não variar com o seletor de venda.
-    O preço de tabela do BI (PCPRODUT[PVENDA]) está vazio; usar o realizado 12m como referência.
-    Cache mensal (6h)."""
+    """{cod: preço de venda unitário} — realizado médio dos ÚLTIMOS 3 MESES (RCA), janela FIXA
+    (independe do filtro de período), p/ a 'venda perdida' não variar com o seletor de venda e
+    alinhar com a janela do giro (também 3m). O preço de tabela do BI (PCPRODUT[PVENDA]) está
+    vazio; usar o realizado 3m como referência. Cache mensal (6h)."""
     hoje = _hoje()
     key = f"precov:{_filiais_key(filiais)}:{hoje.isoformat()[:7]}"
     hit = pbi._CACHE.get(key)
@@ -397,7 +397,7 @@ def _preco_venda_map(filiais):
         return hit
     m = {}
     try:
-        for r in pbi.run_dax_rca(Q.q_vendas_rca(hoje - timedelta(days=365), hoje, filiais)):
+        for r in pbi.run_dax_rca(Q.q_vendas_rca(hoje - timedelta(days=90), hoje, filiais)):
             c = int(core._n(r["CODPROD"])); v = core._n(r.get("venda")); q = core._n(r.get("qtd"))
             if q > 0 and v > 0:
                 m[c] = v / q

@@ -656,22 +656,23 @@ function renderRupturaComprador(P){
   // agrega métricas de ruptura por uma chave (comprador OU curva ABC de venda)
   function agrupa(keyFn,nomeFn){
     const g={};
-    P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0};
+    P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0};
       o.n++;
       if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
-        o.perdida+=(p.venda_perdida||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
-    return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0})).filter(o=>o.n>0);
+        o.perdida+=(p.venda_perdida||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);
+        if(p.dias_sem_venda!=null){o.diasSum+=p.dias_sem_venda; o.diasN++;}}});
+    return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0,diasrup:o.diasN?Math.round(o.diasSum/o.diasN):0})).filter(o=>o.n>0);
   }
   const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
-    {k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
+    {k:'diasrup',label:'Dias rupt. méd',num:1},{k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
   function tabela(rows0,skk,lbl0,nav){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
     const ck=[{k:'nome',label:lbl0},...ckBase];
-    const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor}),{n:0,rupt:0,semped:0,perdida:0,repor:0});
-    const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${int(T.semped)}</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
+    const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor,diasSum:s.diasSum+r.diasSum,diasN:s.diasN+r.diasN}),{n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0});
+    const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${T.diasN?int(Math.round(T.diasSum/T.diasN))+'d':'—'}</td><td class="num">${int(T.semped)}</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
     return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
+      <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${r.diasrup?int(r.diasrup)+'d':'—'}</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
   }
   const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
   const porCurva=agrupa(p=>p.curva_abc||'C', (p,k)=>'Curva '+k);
@@ -684,7 +685,7 @@ function renderRupturaComprador(P){
        ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
        ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
-     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 12m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
      <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);

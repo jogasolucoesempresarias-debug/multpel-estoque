@@ -411,7 +411,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
 
         # VENDA PERDIDA acumulada na ruptura = dias em ruptura × giro/dia × PREÇO DE VENDA.
         # dias em ruptura: proxy = dias_sem_venda (dias desde a última venda), com TETO de 60 dias.
-        # preço de venda: realizado médio de 12m (janela FIXA, estável — não muda com o filtro de
+        # preço de venda: realizado médio de 3m (janela FIXA, estável — não muda com o filtro de
         # período); o preço de tabela do BI (PCPRODUT[PVENDA]) está vazio. Fallback no custo se
         # não houver preço realizado. Só p/ item em ruptura (estoque<=0 e giro>0); senão 0.
         preco_venda = _n((preco_venda_map or {}).get(cod)) or custofin
