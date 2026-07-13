@@ -377,10 +377,34 @@ def _build_produtos():
                     if params.get("forecast") else None)
     ja_pedida = _pedidos_data(filiais_e, _hoje())["ja_pedida"]
     embalagem = _embalagem_map()
+    preco_venda = _preco_venda_map(filiais_v)
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
-                                       ja_pedida_map=ja_pedida, embalagem_map=embalagem)
+                                       ja_pedida_map=ja_pedida, embalagem_map=embalagem,
+                                       preco_venda_map=preco_venda)
     return produtos, params, filiais_e
+
+
+def _preco_venda_map(filiais):
+    """{cod: preço de venda unitário} — realizado médio dos ÚLTIMOS 12 MESES (RCA), janela FIXA
+    (independe do filtro de período), p/ a 'venda perdida' não variar com o seletor de venda.
+    O preço de tabela do BI (PCPRODUT[PVENDA]) está vazio; usar o realizado 12m como referência.
+    Cache mensal (6h)."""
+    hoje = _hoje()
+    key = f"precov:{_filiais_key(filiais)}:{hoje.isoformat()[:7]}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    m = {}
+    try:
+        for r in pbi.run_dax_rca(Q.q_vendas_rca(hoje - timedelta(days=365), hoje, filiais)):
+            c = int(core._n(r["CODPROD"])); v = core._n(r.get("venda")); q = core._n(r.get("qtd"))
+            if q > 0 and v > 0:
+                m[c] = v / q
+    except Exception as e:
+        print(f"[preco_venda] RCA indisponível ({e}). Venda perdida cai no custo.")
+    pbi._CACHE.set(key, m, 6 * 3600)
+    return m
 
 
 # ───────────────────────── páginas ─────────────────────────

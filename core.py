@@ -206,7 +206,8 @@ def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
 
 # ───────────────────────── produtos ─────────────────────────
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
-                       hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None):
+                       hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
+                       preco_venda_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
@@ -408,6 +409,18 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         _fator_cx = caixa if caixa and caixa > 1 else 1
         cub_caixa = _n(emb.get("volume")) or (_n(cad.get("VOLUME")) * _fator_cx)
 
+        # VENDA PERDIDA acumulada na ruptura = dias em ruptura × giro/dia × PREÇO DE VENDA.
+        # dias em ruptura: proxy = dias_sem_venda (dias desde a última venda), com TETO de 60 dias.
+        # preço de venda: realizado médio de 12m (janela FIXA, estável — não muda com o filtro de
+        # período); o preço de tabela do BI (PCPRODUT[PVENDA]) está vazio. Fallback no custo se
+        # não houver preço realizado. Só p/ item em ruptura (estoque<=0 e giro>0); senão 0.
+        preco_venda = _n((preco_venda_map or {}).get(cod)) or custofin
+        if qtdisp <= 0 and giro_dia > 0:
+            _dias_rup = min(dias_sem_venda if dias_sem_venda is not None else 30, 60)
+            venda_perdida = _dias_rup * giro_dia * preco_venda
+        else:
+            venda_perdida = 0.0
+
         # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
         tem_compra = sugestao_cx > 0
         if qtdisp <= 0:
@@ -455,6 +468,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
             "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
             "margem": _round(margem * 100, 1) if margem is not None else None,
+            "preco_venda": _round(preco_venda, 4), "venda_perdida": _round(venda_perdida),
             "serie_giro": [_round(x) for x in serie],
             "cobertura": _round(cobertura, 1) if cobertura is not None else None,
             "cobertura_dias": cobertura_dias, "cobertura_faixa": cobertura_faixa,
@@ -724,7 +738,7 @@ def ruptura_por_comprador(produtos):
             g["n_ruptura"] += 1
             if (p.get("qtd_ja_pedida") or 0) <= 0:
                 g["n_sem_pedido"] += 1
-            g["venda_perdida"] += (p.get("giro_mes") or 0) * (p.get("custo_unit") or 0)
+            g["venda_perdida"] += (p.get("venda_perdida") or 0)   # acumulada na ruptura, a preço de venda
             g["custo_reposicao"] += (p.get("sugestao_compra") or 0) * (p.get("custo_unit") or 0)
     saida = []
     for g in grupos.values():
@@ -1010,7 +1024,7 @@ def resumo_ruptura(produtos):
         "itens": len(rup),
         "total": total,
         "perc": _round(len(rup) / total, 4) if total else 0,
-        "venda_perdida": _round(sum((p.get("giro_mes") or 0) * (p.get("custo_unit") or 0) for p in rup)),
+        "venda_perdida": _round(sum((p.get("venda_perdida") or 0) for p in rup)),
         "valor": _round(sum(p.get("valor") or 0 for p in rup)),  # mantido p/ compat (≈0)
         "criterio": "ESTOQUE <= 0 E GIRO MENSAL > 0",
     }

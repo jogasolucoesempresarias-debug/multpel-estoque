@@ -324,7 +324,7 @@ function renderEstoqueZero(P){
   const z=P.filter(p=>(p.qtdisp||0)<=0);
   const neg=z.filter(p=>(p.qtdisp||0)<0), comGiro=z.filter(p=>(p.giro_dia||0)>0), comPed=z.filter(p=>(p.qtd_ja_pedida||0)>0);
   // impacto financeiro da ruptura (a custo): volume parado/mês + custo de repor até o alvo
-  const vendaPerdida=comGiro.reduce((s,p)=>s+(p.giro_mes||0)*(p.custo_unit||0),0);
+  const vendaPerdida=comGiro.reduce((s,p)=>s+(p.venda_perdida||0),0);
   const custoRepor=comGiro.reduce((s,p)=>s+(p.sugestao_compra||0)*(p.custo_unit||0),0);
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
@@ -341,7 +341,7 @@ function renderEstoqueZero(P){
        ${kpi('Zerados / negativos',int(z.length),int(neg.length)+' negativos',C.red)}
        ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
        ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
-       ${kpi('Venda perdida/mês',money(vendaPerdida),'volume parado · a custo',C.purple)}
+       ${kpi('Venda perdida (ruptura)',money(vendaPerdida),'dias em ruptura × giro × preço de venda',C.purple)}
        ${kpi('Custo de reposição',money(custoRepor),'repor até o alvo',C.accent2)}
      </div>
      <div class="fb-group" style="margin:0 0 6px"><label>Filtrar status</label>
@@ -659,11 +659,11 @@ function renderRupturaComprador(P){
     P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0};
       o.n++;
       if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
-        o.perdida+=(p.giro_mes||0)*(p.custo_unit||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
+        o.perdida+=(p.venda_perdida||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);}});
     return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0})).filter(o=>o.n>0);
   }
   const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
-    {k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida/mês',num:1},{k:'repor',label:'Custo reposição',num:1}];
+    {k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
   function tabela(rows0,skk,lbl0,nav){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
@@ -680,11 +680,11 @@ function renderRupturaComprador(P){
   $('#v-ruptura_comprador').innerHTML=head('Ruptura por comprador','ruptura_comprador')+
     `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
        ${kpi('Itens em ruptura',int(totR),int(totSem)+' sem pedido',C.red)}
-       ${kpi('Venda perdida/mês',money(totP),'potencial não atendido',C.orange)}
+       ${kpi('Venda perdida (ruptura)',money(totP),'acumulada · a preço de venda',C.orange)}
        ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
        ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
-     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). "Venda perdida/mês" = giro mensal × custo. "Custo reposição" = sugestão × custo.</div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. "Sem pedido" = ainda sem pedido de compra em aberto (risco real). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 12m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
      <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);
@@ -891,7 +891,7 @@ async function injectResumos(sel){
     ['Itens em ruptura',int(rup.itens)],
     ['Total de produtos',int(rup.total)],
     ['% ruptura',rup.perc!=null?pct(rup.perc):'—'],
-    ['Venda perdida/mês',money(rup.venda_perdida)],
+    ['Venda perdida (ruptura)',money(rup.venda_perdida)],
     ['Critério',rup.criterio||'ESTOQUE ≤ 0 E GIRO > 0'],
   ],C.red);
   el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos</span></h2>
