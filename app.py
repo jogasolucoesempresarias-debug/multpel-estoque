@@ -577,7 +577,7 @@ def api_plano_reposicao():
 # ───────────────────────── export CSV ─────────────────────────
 _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
-                 "qtdisp", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
+                 "qtdisp", "qtd_ja_pedida", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
                  "valor", "venda", "lucro", "margem", "status_abast", "status_parado"],
     "comprasvendas": ["codprod", "descricao", "fornecedor", "curva_abc", "comprador", "valor", "venda",
                       "lucro", "margem", "giro_mes", "cobertura", "dias_sem_venda"],
@@ -753,8 +753,9 @@ def api_export_xlsx(view):
 # colunas principais por tela: (chave, rótulo, tipo[, maxlen])
 _PDF_COLS = {
     "produtos": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
-                 ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("giro_mes", "Giro/mês", "int"),
-                 ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"), ("status_abast", "Abast.", "text")],
+                 ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
+                 ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"),
+                 ("status_abast", "Abast.", "text")],
     "comprasvendas": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                       ("valor", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
                       ("margem", "Margem", "pct"), ("cobertura", "Cob.(d)", "int")],
@@ -818,7 +819,7 @@ def _fmt_pdf(v, kind, maxlen=None):
     return (s[:maxlen - 1] + "…") if (maxlen and len(s) > maxlen) else s
 
 
-def _gerar_pdf(view, linhas):
+def _gerar_pdf(view, linhas, group_by=None):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
@@ -842,8 +843,28 @@ def _gerar_pdf(view, linhas):
 
     header = [c[1] for c in spec]
     data = [header]
-    for r in linhas:
-        data.append([_fmt_pdf(r.get(c[0]), c[2], c[3] if len(c) > 3 else None) for c in spec])
+    group_rows = []   # índices das linhas-cabeçalho de grupo (fornecedor)
+
+    def _row(r):
+        return [_fmt_pdf(r.get(c[0]), c[2], c[3] if len(c) > 3 else None) for c in spec]
+
+    if group_by:
+        from itertools import groupby
+        linhas = sorted(linhas, key=lambda r: str(r.get(group_by) or "—").upper())
+        ncols = len(spec)
+        for gnome, grupo in groupby(linhas, key=lambda r: r.get(group_by) or "—"):
+            grupo = list(grupo)
+            sub_val = sum(core._n(r.get("valor")) for r in grupo)
+            sub_ped = sum(core._n(r.get("qtd_ja_pedida")) for r in grupo)
+            gtxt = (f"{gnome}   ·   {len(grupo)} itens   ·   Estoque {_fmt_pdf(sub_val, 'money')}"
+                    f"   ·   Já pedido {_fmt_pdf(sub_ped, 'int')} un")
+            data.append([gtxt] + [""] * (ncols - 1))
+            group_rows.append(len(data) - 1)
+            for r in grupo:
+                data.append(_row(r))
+    else:
+        for r in linhas:
+            data.append(_row(r))
 
     # larguras proporcionais (pesos por tipo; texto largo p/ descrição/fornecedor)
     def _peso(c):
@@ -869,6 +890,13 @@ def _gerar_pdf(view, linhas):
         al = 'RIGHT' if c[2] in ("int", "money", "pct", "num") else ('CENTER' if c[2] == "date" else 'LEFT')
         if al != 'LEFT':
             estilo.append(('ALIGN', (i, 0), (i, -1), al))
+    # cabeçalho de cada grupo de fornecedor: mescla a linha, fundo e negrito
+    for gi in group_rows:
+        estilo += [('SPAN', (0, gi), (-1, gi)),
+                   ('BACKGROUND', (0, gi), (-1, gi), colors.HexColor('#dbe4f0')),
+                   ('FONTNAME', (0, gi), (-1, gi), 'Helvetica-Bold'),
+                   ('TEXTCOLOR', (0, gi), (-1, gi), colors.HexColor('#0f2a5c')),
+                   ('ALIGN', (0, gi), (-1, gi), 'LEFT')]
     tbl = Table(data, repeatRows=1, colWidths=col_w)
     tbl.setStyle(TableStyle(estilo))
     story.append(tbl)
@@ -887,7 +915,7 @@ def _gerar_pdf(view, linhas):
 @app.route("/api/export/<view>.pdf")
 def api_export_pdf(view):
     _, linhas = _export_data(view)
-    pdf = _gerar_pdf(view, linhas)
+    pdf = _gerar_pdf(view, linhas, group_by="fornecedor" if view == "produtos" else None)
     return Response(pdf, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="estoque_{view}.pdf"'})
 
