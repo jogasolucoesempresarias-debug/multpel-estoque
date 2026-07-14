@@ -1147,6 +1147,22 @@ function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
 function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').classList.remove('on'); }
 
 /* ───────── dispatch ───────── */
+// tooltip: descrição completa ao passar o mouse — só quando o texto da coluna Produto
+// está cortado (ellipsis). A descrição inteira já vem no DOM; aqui só expomos via `title`.
+// Um observer no #content cobre TODAS as abas (sync e async) num ponto só, sem tocar templates.
+function markProdTitles(root){
+  (root || document).querySelectorAll('.prod').forEach(el=>{
+    if(el.dataset.tt) return;                       // já processado nesta renderização
+    el.dataset.tt = '1';
+    if(el.scrollWidth > el.clientWidth + 1) el.title = el.textContent;  // só se truncado
+  });
+}
+function startProdTitles(){
+  const box = $('#content'); if(!box) return;
+  new MutationObserver(muts=>{
+    for(const m of muts){ if(m.addedNodes.length){ markProdTitles(); break; } }
+  }).observe(box, {childList:true, subtree:true});
+}
 // mostra só os tabs do grupo ativo (chamado cedo no boot p/ não piscar todos os tabs no load)
 function applyNav(){
   if(!$('#v-'+S.view)) S.view='cockpit';
@@ -1234,6 +1250,7 @@ async function init(){
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
+  startProdTitles();   // tooltip da descrição completa na coluna Produto (todas as abas)
   loadData();
 }
 // altura real da topbar+filterbar (ambas sticky) → offset do cabeçalho congelado das tabelas
