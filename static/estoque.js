@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
+  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
 };
@@ -50,6 +50,10 @@ const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
 const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
 const abastLabel=arr=>!arr.length?'Todos':(arr.length===1?(ABAST_LABELS[arr[0]]||arr[0]):`${arr.length} status`);
+// filtro de margem (aba Produtos) — faixas multi-seleção; margem null (sem venda) vira bucket próprio
+const MARGEM_LABELS={neg:'Negativa (<0%)',b0:'0–10%',b10:'10–20%',b20:'20–30%',b30:'30%+',sv:'Sem venda'};
+const margemLabel=arr=>!arr.length?'Todas':(arr.length===1?(MARGEM_LABELS[arr[0]]||arr[0]):`${arr.length} faixas`);
+const margemBucket=p=>{const m=p.margem; return m==null?'sv':(m<0?'neg':(m<10?'b0':(m<20?'b10':(m<30?'b20':'b30'))));};
 // valor em "N cx · M un" (só unidades quando não há caixa ou ≤0) — colunas de estoque em caixa
 const cxUn=(v,caixa)=>{ if(v==null) return '—'; const c=caixa||1; return (c>1&&v>0)?`${int(Math.round(v/c))} cx · ${int(v)} un`:int(v); };
 function spark(serie){ // mini sparkline SVG de 3 meses
@@ -750,22 +754,31 @@ function renderProdutos(P){
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'xyz',label:'XYZ',badge:true},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'qtbloq',label:'Avaria',num:true,fmt:v=>v?int(v):'—'},
+    {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'venda',label:'Venda',num:true,fmt:money},{key:'lucro',label:'Lucro',num:true,fmt:money},
     {key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
-  // filtro Abast. LOCAL desta aba (multi-seleção) — não afeta as outras abas
-  const abn=S.cli.abast||[];
-  const rows=abn.length?P.filter(p=>abn.includes(p.status_abast)):P;
-  const abastCtl=`<div class="fb-group" style="margin:0 0 8px"><label>Abastecimento</label>
+  // filtros LOCAIS desta aba (multi-seleção) — não afetam as outras abas
+  const abn=S.cli.abast||[], mgn=S.cli.margem||[];
+  let rows=P;
+  if(abn.length) rows=rows.filter(p=>abn.includes(p.status_abast));
+  if(mgn.length) rows=rows.filter(p=>mgn.includes(margemBucket(p)));
+  const abastCtl=`<div class="fb-group" style="margin:0"><label>Abastecimento</label>
       <details class="ms" id="pr-abast"><summary class="fb-control">${abastLabel(abn)}</summary>
         <div class="ms-menu">${Object.entries(ABAST_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${abn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
       </details></div>`;
-  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+abastCtl+renderTable(rows,cols,'produtos');
+  const margemCtl=`<div class="fb-group" style="margin:0"><label>Margem</label>
+      <details class="ms" id="pr-margem"><summary class="fb-control">${margemLabel(mgn)}</summary>
+        <div class="ms-menu">${Object.entries(MARGEM_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${mgn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
+      </details></div>`;
+  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">${abastCtl}${margemCtl}</div>`+renderTable(rows,cols,'produtos');
   const d=$('#pr-abast');
   if(d) d.addEventListener('change',()=>{ S.cli.abast=[...d.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
+  const dm=$('#pr-margem');
+  if(dm) dm.addEventListener('change',()=>{ S.cli.margem=[...dm.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
 }
 
 const STAT_LUCRO={alta:['Alta entrega',C.green],boa:['Boa entrega',C.accent],baixa:['Entrega baixa',C.dim],negativo:['Lucro negativo',C.red]};
@@ -919,6 +932,15 @@ function resumoTabela(titulo,faixas,total,colQt,lblQt){
     <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
     <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(total[colQt])}</td><td class="num">${money(total.valor)}</td><td class="num">100%</td><td></td></tr></tbody></table></div></div>`;
 }
+// variante da resumoTabela p/ um SUBGRUPO de faixas: calcula o próprio subtotal
+// (itens/valor/%) — usada p/ separar Cobertura de Estoque × Estoque Parado.
+function resumoTabelaGrupo(titulo,faixas,colQt,lblQt){
+  const tQt=faixas.reduce((s,f)=>s+(f[colQt]||0),0),tVal=faixas.reduce((s,f)=>s+(f.valor||0),0),tPerc=faixas.reduce((s,f)=>s+(f.perc||0),0);
+  return `<div class="panel grow"><h3>${titulo}</h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status</th></tr></thead>
+    <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
+    <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(tQt)}</td><td class="num">${money(tVal)}</td><td class="num">${pct(tPerc)}</td><td></td></tr></tbody></table></div></div>`;
+}
 function resumoCard(titulo,rows,cor){
   return `<div class="panel grow"><h3>${titulo}</h3>
     <table class="mini">${rows.map(([l,v])=>`<tr><td class="muted">${l}</td><td class="num"><b>${v}</b></td></tr>`).join('')}</table>
@@ -950,7 +972,10 @@ async function injectResumos(sel){
     <div class="row">${cardOrc}${cardRup}</div>
     <div class="row">
       ${resumoTabela('Itens a vencer por faixa de validade',o.validade.faixas,o.validade.total,'itens','Itens')}
-      ${resumoTabela('Cobertura de estoque por faixa de dias',o.cobertura.faixas,o.cobertura.total,'produtos','Produtos')}
+      <div class="grow" style="min-width:0">
+        ${resumoTabelaGrupo('Cobertura de estoque',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return !isNaN(n)&&n<91;}),'produtos','Produtos')}
+        ${resumoTabelaGrupo('Estoque parado',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return isNaN(n)||n>=91;}),'produtos','Produtos')}
+      </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
 }
@@ -1289,7 +1314,7 @@ async function init(){
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
+    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
     S.compradorNome='';
     ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
     $('#f-busca').value='';
