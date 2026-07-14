@@ -292,4 +292,37 @@ Lista itens com problema de cadastro (sem custo, sem giro, sem fornecedor, etc.)
 
 ---
 
+## 14. Componentes: drawers e modais (operação)
+
+Além das abas, o painel tem painéis laterais e janelas que abrem por clique.
+
+### 14.1 360° do produto (clicar em qualquer produto de qualquer lista)
+Painel lateral com a **ficha completa** do item:
+- **Cabeçalho:** descrição · cód · fornecedor · badges **ABC** e **XYZ** · comprador.
+- **KPIs:** Disponível · Valor em estoque · Giro/mês (com mini-gráfico dos últimos meses) · Cobertura (+ barra visual).
+- **Fonte do giro:** nota se está usando média 3m (oficial), forecast (RCA) ou forecast sazonal.
+- **Venda no período:** Venda · Lucro (com margem %) · Qtd vendida.
+- **Situação:** Abastecimento · Ruptura · Parado · Última saída (data + dias sem venda).
+- **Abastecimento (com lead efetivo):** Embalagem · Já pedido (aberto) · Estoque projetado (+ cobertura proj.) · Estoque alvo · **Sugestão de compra** (qtd + valor) · Status executivo.
+- **Plano de ação** (se houver) e **Plano no tempo (12 semanas)** — gráfico DRP: saldo projetado × recebimentos × linha do estoque de segurança; indica o **próximo pedido** e **quando ele precisa sair**.
+- **Lotes / validade** endereçados do item.
+- Botão **"Registrar pedido"** (abre o construtor já com esse item).
+
+### 14.2 "Gerar pedido" / Novo pedido de compra (construtor)
+Modal para montar um **pedido da nossa plataforma** (pendente de envio ao Winthor).
+- Cabeçalho: Data · Fornecedor · Nº pedido · Prazo (dias) · Valor.
+- **Adicionar produto** (por código/descrição + Qtd).
+- Tabela de itens: Cód · Produto · **Qtd (un) editável** · Cx · **Custo (preço) editável** · Valor · remover (✕). O total e o valor do pedido **recalculam ao vivo**.
+- O botão **"Gerar pedido"** da aba **Abastecimento** abre esse construtor **já preenchido** com os itens sugeridos daquele fornecedor.
+- **Lançar** salva o pedido (aparece em "Pedidos da nossa plataforma"). **Não soma na meta** até ser lançado no Winthor.
+- Cada pedido salvo tem **PDF** (estilo relatório 211 — ver §11) e opção de remover.
+
+### 14.3 Itens comprados de um pedido (drill do Orçamento)
+Clicar num **pedido em aberto** (Acompanhamento de pedidos em aberto) abre um modal com os itens **reais do Winthor** daquele pedido: **Cód · Produto · Pedida · Entregue · A entregar**. Clicar num item abre o 360°.
+
+### 14.4 Plano de ação
+Registro de ação por item ou lote (usado principalmente em **Parado** e **Validade**): **Responsável · Ação** (ex.: ENCARTE, DEVOLUÇÃO, BONIFICAÇÃO) **· Prazo · Status** (PENDENTE / EM ANDAMENTO / CONCLUÍDO). Fica salvo no Postgres e aparece como **badge** na linha do item. Pode ser editado ou excluído.
+
+---
+
 *Última revisão: 07/2026. Fonte da verdade: código do app (`core.py` = motor de cálculo, `app.py` = rotas/dados, `queries.py` = DAX, `static/estoque.js` = telas). Quando o comportamento divergir deste manual, o código manda.*
