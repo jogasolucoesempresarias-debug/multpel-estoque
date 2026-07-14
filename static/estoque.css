@@ -189,18 +189,37 @@ td .prod { max-width: 210px; overflow: hidden; text-overflow: ellipsis; display:
 .b-Z { background: rgba(248,113,113,.16); color: var(--red); }
 
 /* ABC-XYZ matrix */
-.matrix { display: grid; grid-template-columns: 40px repeat(3,1fr); gap: 6px; max-width: 560px; }
-.matrix .mh { display: grid; place-items: center; font-size: .72rem; color: var(--text-dim); font-weight: 600; }
-.mcell {
-  border-radius: 10px; padding: 12px; cursor: pointer; border: 1px solid var(--border);
-  background: var(--surface2); transition: all .15s; text-align: center;
-}
-.mcell:hover { border-color: var(--accent); transform: translateY(-2px); }
-.mcell .mc-key { font-size: .72rem; font-weight: 700; color: var(--accent); }
-.mcell .mc-qt { font-size: 1.25rem; font-weight: 700; margin: 3px 0; }
-.mcell .mc-val { font-size: .68rem; color: var(--text-dim); }
-.mcell.empty { opacity: .35; cursor: default; }
-.mcell.empty:hover { transform: none; border-color: var(--border); }
+.axm { display: grid; grid-template-columns: 46px repeat(3,1fr) 108px; gap: 8px; }
+.axm-corner { display: flex; align-items: flex-end; justify-content: center; text-align: center; }
+.axm-h { display: flex; align-items: flex-end; justify-content: center; text-align: center; font-size: .67rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; line-height: 1.25; padding-bottom: 2px; }
+.axm-h b { color: var(--text); font-weight: 800; }
+.axm-rh { display: flex; align-items: center; justify-content: center; font-size: 1.15rem; font-weight: 800; color: var(--text-dim); }
+.axm-cell { position: relative; border-radius: 11px; padding: 14px 8px 12px; min-height: 86px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--border); cursor: pointer; transition: transform .12s, box-shadow .12s; overflow: hidden; }
+.axm-cell:hover { transform: translateY(-3px); box-shadow: 0 8px 22px rgba(0,0,0,.42); }
+.axm-cell .k { position: absolute; top: 8px; left: 10px; font-size: .6rem; font-weight: 800; letter-spacing: .6px; }
+.axm-cell .p { position: absolute; top: 8px; right: 10px; font-size: .58rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.axm-cell .q { font-size: 1.6rem; font-weight: 800; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.axm-cell .v { font-size: .7rem; color: var(--text-dim); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.axm-cell.z1 { background: rgba(52,211,153,.13); border-color: rgba(52,211,153,.34); }
+.axm-cell.z1 .k { color: var(--green); }
+.axm-cell.z2 { background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.32); }
+.axm-cell.z2 .k { color: var(--yellow); }
+.axm-cell.z3 { background: rgba(248,113,113,.13); border-color: rgba(248,113,113,.34); }
+.axm-cell.z3 .k { color: var(--red); }
+.axm-cell.empty { background: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(148,163,184,.045) 6px, rgba(148,163,184,.045) 12px); border-style: dashed; cursor: default; }
+.axm-cell.empty .q { color: var(--text-mute); font-weight: 600; }
+.axm-cell.empty:hover { transform: none; box-shadow: none; }
+.axm-tot { border-radius: 11px; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); }
+.axm-tot .q { font-size: 1.12rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.axm-tot .v { font-size: .61rem; color: var(--text-dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+.axm-tot.grand { background: var(--surface3); }
+/* legenda de zonas + leitura */
+.axm-zone { display: flex; padding: 11px 13px; border-radius: 10px; background: var(--surface2); border-left: 3px solid var(--z); margin-bottom: 9px; }
+.axm-zone .zt { font-weight: 700; font-size: .84rem; color: var(--z); }
+.axm-zone .zd { font-size: .77rem; color: var(--text-dim); margin-top: 3px; line-height: 1.35; }
+.axm-zone .zc { font-size: .63rem; color: var(--text-mute); margin-top: 5px; letter-spacing: .6px; font-weight: 700; }
+.axm-read .ri { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 12px; background: var(--surface2); border-radius: 8px; margin-bottom: 7px; font-size: .79rem; color: var(--text-dim); }
+.axm-read .ri b { font-size: .92rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text); }
 
 /* loading / empty */
 .loader { text-align: center; padding: 60px; color: var(--text-dim); }

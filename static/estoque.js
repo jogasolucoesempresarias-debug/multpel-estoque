@@ -618,17 +618,49 @@ function renderParado(P){
   wirePlanoCells();
 }
 
+// zona de ação de cada célula ABC×XYZ: 1=automatizar(verde) 2=monitorar(âmbar) 3=sob demanda(vermelho)
+const AXZONE={AX:1,AY:1,BX:1, AZ:2,BY:2,BZ:2,CX:2, CY:3,CZ:3};
 function renderABCXYZ(P){
   const m={}; P.forEach(p=>{if(p.abc_xyz){(m[p.abc_xyz]=m[p.abc_xyz]||{qt:0,venda:0});m[p.abc_xyz].qt++;m[p.abc_xyz].venda+=(p.venda||0);}});
-  const grid=`<div class="matrix"><div></div><div class="mh">X · estável</div><div class="mh">Y · variável</div><div class="mh">Z · errático</div>`+
-    ['A','B','C'].map(a=>`<div class="mh">${a}</div>`+['X','Y','Z'].map(x=>{const k=a+x,d=m[k];return d&&d.qt?`<div class="mcell" data-key="${k}"><div class="mc-key">${k}</div><div class="mc-qt">${int(d.qt)}</div><div class="mc-val">${moneyK(d.venda)}</div></div>`:`<div class="mcell empty"><div class="mc-key">${k}</div><div class="mc-qt">0</div></div>`;}).join('')).join('')+`</div>`;
+  const cell=(a,x)=>m[a+x]||{qt:0,venda:0};
+  const rowT=a=>['X','Y','Z'].reduce((o,x)=>{const d=cell(a,x);return{qt:o.qt+d.qt,venda:o.venda+d.venda};},{qt:0,venda:0});
+  const colT=x=>['A','B','C'].reduce((o,a)=>{const d=cell(a,x);return{qt:o.qt+d.qt,venda:o.venda+d.venda};},{qt:0,venda:0});
+  const totVenda=['A','B','C'].reduce((s,a)=>s+rowT(a).venda,0)||1, totQt=P.length||1;
+  // grid com totais nas margens
+  let g=`<div class="axm"><div class="axm-corner"><span style="font-size:.58rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;line-height:1.3">ABC↓<br>XYZ→</span></div>`+
+    `<div class="axm-h"><b>X</b> estável</div><div class="axm-h"><b>Y</b> variável</div><div class="axm-h"><b>Z</b> errático</div><div class="axm-h">Total<br>curva</div>`;
+  ['A','B','C'].forEach(a=>{
+    g+=`<div class="axm-rh">${a}</div>`;
+    ['X','Y','Z'].forEach(x=>{const k=a+x,d=cell(a,x),z=AXZONE[k];
+      g+= d.qt
+        ? `<div class="axm-cell z${z}" data-key="${k}" title="${k} · clique para listar os produtos"><span class="k">${k}</span><span class="p">${dec(d.venda/totVenda*100,0)}%</span><span class="q">${int(d.qt)}</span><span class="v">${moneyK(d.venda)}</span></div>`
+        : `<div class="axm-cell empty"><span class="k">${k}</span><span class="q">0</span></div>`;});
+    const rt=rowT(a);
+    g+=`<div class="axm-tot"><span class="q">${int(rt.qt)}</span><span class="v">${moneyK(rt.venda)}</span></div>`;
+  });
+  g+=`<div class="axm-rh" style="font-size:.72rem;color:var(--text-mute)">Σ</div>`+
+    ['X','Y','Z'].map(x=>{const ct=colT(x);return `<div class="axm-tot"><span class="q">${int(ct.qt)}</span><span class="v">${moneyK(ct.venda)}</span></div>`;}).join('')+
+    `<div class="axm-tot grand"><span class="q">${int(totQt)}</span><span class="v">${moneyK(totVenda)}</span></div></div>`;
+  // legenda por zona (mesma cor das células)
+  const zones=[
+    {z:'var(--green)',t:'Automatizar · nunca faltar',d:'Alto/médio valor e demanda previsível. Reposição no automático, controle rígido.',c:'AX · AY · BX'},
+    {z:'var(--yellow)',t:'Monitorar · estoque de segurança',d:'Valor alto porém errático, ou giro baixo previsível. Acompanhar de perto e proteger com margem de segurança.',c:'AZ · BY · BZ · CX'},
+    {z:'var(--red)',t:'Sob demanda · descontinuar',d:'Baixo valor e demanda imprevisível. Comprar sob pedido ou tirar de linha.',c:'CY · CZ'}];
+  const leg=zones.map(o=>`<div class="axm-zone" style="--z:${o.z}"><div><div class="zt">${o.t}</div><div class="zd">${o.d}</div><div class="zc">${o.c}</div></div></div>`).join('');
+  // leitura (insights automáticos)
+  const redV=cell('C','Y').venda+cell('C','Z').venda, redQ=cell('C','Y').qt+cell('C','Z').qt, az=cell('A','Z'), cT=rowT('C');
+  const read=`<div class="axm-read">
+    <div class="ri"><span>Zona vermelha (CY+CZ) — candidatos a sair</span><b style="color:var(--red)">${moneyK(redV)} · ${int(redQ)} itens</b></div>
+    <div class="ri"><span>AZ — alto valor, demanda errática (risco de ruptura)</span><b style="color:var(--yellow)">${int(az.qt)} itens · ${moneyK(az.venda)}</b></div>
+    <div class="ri"><span>Curva C: ${dec(cT.qt/totQt*100,0)}% dos itens, só ${dec(cT.venda/totVenda*100,0)}% da venda</span><b>${int(cT.qt)} itens</b></div></div>`;
   $('#v-abcxyz').innerHTML=`<h2 class="section"><span>Matriz ABC-XYZ</span></h2>
-    <div class="row"><div class="panel"><h3>Curva de vendas (ABC) × Variabilidade da demanda (XYZ)</h3>${grid}<div class="count-line" style="margin-top:14px">Valor = <b>venda</b> do período. AX = campeão previsível (controle rígido) · CZ = candidatos a descontinuar. Clique para listar em Produtos.</div></div>
-    <div class="panel grow"><h3>Estratégia</h3>
-     <div class="lote-row"><b>A·X/Y</b><span class="lr-r">Nunca faltar. Reposição automática.</span></div>
-     <div class="lote-row"><b>A·Z</b><span class="lr-r">Alto valor, demanda imprevisível. Monitorar.</span></div>
-     <div class="lote-row"><b>C·Z</b><span class="lr-r">Candidatos a descontinuar / compra sob demanda.</span></div></div></div>`;
-  $('#v-abcxyz').querySelectorAll('.mcell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=k[0];S.cli.xyz=k[1];$('#f-curva').value=k[0];$('#f-xyz').value=k[1];goView('produtos',{});});
+    <div class="row">
+      <div class="panel" style="flex:1.7 1 540px"><h3>Curva de vendas (ABC) × Variabilidade da demanda (XYZ)</h3>${g}
+        <div class="count-line" style="margin-top:14px">Cor = zona de ação · número = itens · valor = <b>venda</b> do período · % = fatia da venda. Clique numa célula para listar os produtos.</div></div>
+      <div class="panel grow" style="flex:1 1 300px"><h3>Estratégia por zona</h3>${leg}
+        <h3 style="margin-top:18px">Leitura</h3>${read}</div>
+    </div>`;
+  $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=k[0];S.cli.xyz=k[1];$('#f-curva').value=k[0];$('#f-xyz').value=k[1];goView('produtos',{});});
 }
 
 function renderFornecedores(P){
