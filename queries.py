@@ -384,3 +384,84 @@ FILTER(
     CALCULATETABLE({inner}, {", ".join(filtros)}),
     PCESTENDERECO[CODPROD] = {int(codprod)} && [qt] > 0
 )"""
+
+
+# ───────────────────────── ocupação / WMS ─────────────────────────
+def q_produto_enderecos(codprod, filiais=None):
+    """Posições WMS de 1 produto (drawer): RUA/PREDIO/NIVEL/APTO + TIPOENDER + QT.
+    QT>0, RUA<>99. Endereço vem por LOOKUPVALUE em PCENDERECO[CODENDERECO]."""
+    lista = _lista_filiais_dax(filiais)
+    filtros = ["PCENDERECO[RUA] <> 99"]
+    if lista:
+        filtros.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    inner = f"""SELECTCOLUMNS(
+        FILTER(PCESTENDERECO, PCESTENDERECO[CODPROD] = {int(codprod)} && PCESTENDERECO[QT] > 0),
+        "rua",    LOOKUPVALUE(PCENDERECO[RUA],       PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "predio", LOOKUPVALUE(PCENDERECO[PREDIO],    PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "nivel",  LOOKUPVALUE(PCENDERECO[NIVEL],     PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "apto",   LOOKUPVALUE(PCENDERECO[APTO],      PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "tipo",   LOOKUPVALUE(PCENDERECO[TIPOENDER], PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "q",      PCESTENDERECO[QT]
+    )"""
+    return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(filtros)})"""
+
+
+def q_ocupacao_kpis(filiais=None):
+    """KPIs de ocupação: posições ativas (denominador), ocupadas (QT>0) e produtos endereçados."""
+    lista = _lista_filiais_dax(filiais)
+    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    focc = ['PCENDERECO[RUA] <> 99', 'PCESTENDERECO[QT] > 0']
+    if lista:
+        fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+        focc.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    return f"""EVALUATE ROW(
+    "posicoes", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(fpos)}),
+    "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), {", ".join(focc)}),
+    "produtos", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODPROD]), {", ".join(focc)}),
+    "pares", CALCULATE(COUNTROWS(SUMMARIZE(PCESTENDERECO, PCESTENDERECO[CODPROD], PCESTENDERECO[CODENDERECO])), {", ".join(focc)})
+)"""
+
+
+def q_posicoes_por_produto(filiais=None):
+    """Mapa CODPROD -> nº de posições ocupadas (DISTINCTCOUNT CODENDERECO, QT>0)."""
+    lista = _lista_filiais_dax(filiais)
+    filtros = ["PCENDERECO[RUA] <> 99"]
+    if lista:
+        filtros.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(FILTER(PCESTENDERECO, PCESTENDERECO[QT] > 0), PCESTENDERECO[CODPROD]),
+        "pos", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]))
+    )"""
+    return f"""EVALUATE
+FILTER(
+    CALCULATETABLE({inner}, {", ".join(filtros)}),
+    [pos] > 0
+)"""
+
+
+def q_ocupacao_por_rua(filiais=None):
+    """Por RUA: posições totais (PCENDERECO ativas) e ocupadas (PCESTENDERECO QT>0)."""
+    lista = _lista_filiais_dax(filiais)
+    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    if lista:
+        fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(PCENDERECO, PCENDERECO[RUA]),
+        "posicoes", CALCULATE(COUNTROWS(PCENDERECO)),
+        "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), PCESTENDERECO[QT] > 0)
+    )"""
+    return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""
+
+
+def q_ocupacao_por_tipo(filiais=None):
+    """Por TIPOENDER (AP=picking / AE=pulmão): posições ativas e ocupadas."""
+    lista = _lista_filiais_dax(filiais)
+    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    if lista:
+        fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(PCENDERECO, PCENDERECO[TIPOENDER]),
+        "posicoes", CALCULATE(COUNTROWS(PCENDERECO)),
+        "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), PCESTENDERECO[QT] > 0)
+    )"""
+    return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""

@@ -198,6 +198,22 @@ def _endereco_map(filiais):
     return m
 
 
+def _posicoes_map(filiais):
+    """{cod: nº de posições WMS ocupadas} — DISTINCTCOUNT(CODENDERECO), QT>0, RUA<>99."""
+    key = f"pos:{_filiais_key(filiais)}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        rows = pbi.run_dax(Q.q_posicoes_por_produto(filiais))
+        m = {int(core._n(r["CODPROD"])): int(core._n(r.get("pos"))) for r in rows}
+    except Exception as e:
+        print(f"[posicoes] WMS indisponível ({e}).")
+        m = {}
+    pbi._CACHE.set(key, m, 1800)
+    return m
+
+
 # ───────────────────────── embalagem / pedido real (cache) ─────────────────────────
 @pbi.cached(ttl=86400, key_fn=lambda: "embalagem")
 def _embalagem_map():
@@ -382,6 +398,17 @@ def _build_produtos():
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
                                        preco_venda_map=preco_venda)
+    # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
+    pos_map = _posicoes_map(filiais_e)
+    for p in produtos:
+        pe = pos_map.get(p["codprod"], 0)
+        p["pos_end"] = pe
+        cx = p.get("caixa") or 1
+        vol_un = (p.get("cubagem_caixa_m3") or 0) / cx if cx else 0
+        p["m3_end"] = round((p.get("qt_end") or 0) * vol_un, 3)
+        # espaço morto: ocupa >=3 posições e praticamente não gira
+        dsv = p.get("dias_sem_venda")
+        p["espaco_morto"] = pe >= 3 and ((p.get("giro_mes") or 0) <= 0 or (dsv is not None and dsv >= 90))
     return produtos, params, filiais_e
 
 
@@ -545,9 +572,30 @@ def api_produto(codprod):
     p = idx.get(codprod)
     lotes_raw = pbi.run_dax(Q.q_lotes_produto(codprod, filiais))
     lotes = core.validade_fefo(lotes_raw, idx, params, hoje=_hoje()) if p else []
+    enderecos = []
     if p:
+        try:
+            enderecos = pbi.run_dax(Q.q_produto_enderecos(codprod, filiais))
+        except Exception as e:
+            print(f"[enderecos] WMS indisponível p/ {codprod} ({e}).")
         p = {**p, "plano": core.plano_reposicao(p, params, hoje=_hoje())}
-    return jsonify({"ok": bool(p), "produto": p, "lotes": lotes})
+    return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos})
+
+
+@app.route("/api/ocupacao")
+def api_ocupacao():
+    filiais = _filiais_estoque()
+    key = f"ocup:{_filiais_key(filiais)}"
+    hit = pbi._CACHE.get(key)
+    if hit is None:
+        try:
+            hit = core.ocupacao_resumo(pbi.run_dax(Q.q_ocupacao_kpis(filiais)),
+                                       pbi.run_dax(Q.q_ocupacao_por_rua(filiais)),
+                                       pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)))
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 502
+        pbi._CACHE.set(key, hit, 1800)
+    return jsonify({"ok": True, **hit})
 
 
 @app.route("/api/plano_reposicao")

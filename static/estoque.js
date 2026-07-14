@@ -44,7 +44,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','ruptura_comprador'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
@@ -1212,6 +1212,7 @@ async function openProduto(cod){
       <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(p.valor_sugerido_liq)}</span></div>
       <div class="lote-row"><span>Status</span><span>${statExec(p.status_exec)}</span></div>
       ${planoDrawer(p.plano)}
+      ${enderecosDrawer(j.enderecos)}
       <div class="d-sec">Lotes / validade</div>
       ${lotes.length?lotes.map(l=>`<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>`).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
       ${(p.sugestao_compra||0)>0?`<div class="m-acts"><button class="btn primary" id="d-pedido">Registrar pedido</button></div>`:''}`;
@@ -1221,6 +1222,83 @@ async function openProduto(cod){
 }
 function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
 function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').classList.remove('on'); }
+
+/* ───────── ocupação / WMS ───────── */
+// TIPOENDER: AP = face de apanha (chão, 1 SKU/posição) · AE = pulmão (paletes, níveis altos)
+const TIPO_WMS={AP:'Picking',AE:'Pulmão'};
+const tipoWms=t=>TIPO_WMS[t]||t||'—';
+// seção "Endereços WMS" no drawer do produto — agrupada por Picking/Pulmão
+function enderecosDrawer(ends){
+  if(!ends||!ends.length) return '<div class="d-sec">Endereços WMS</div><div class="muted" style="font-size:.8rem">Sem posição endereçada.</div>';
+  const tot=ends.reduce((s,e)=>s+(+e.q||0),0);
+  const fmt=e=>`R${int(e.rua)} · P${int(e.predio)} · N${int(e.nivel)} · A${int(e.apto)}`;
+  const g={}; ends.forEach(e=>{const t=tipoWms(e.tipo);(g[t]=g[t]||[]).push(e);});
+  const keys=[...new Set(['Picking','Pulmão',...Object.keys(g)])].filter(k=>g[k]);
+  let html=`<div class="d-sec">Endereços WMS · ${int(ends.length)} posições · ${int(tot)} un</div>`;
+  keys.forEach(t=>{
+    const arr=g[t].sort((a,b)=>(b.q||0)-(a.q||0)), gt=arr.reduce((s,e)=>s+(+e.q||0),0);
+    html+=`<div style="font-size:.7rem;font-weight:700;letter-spacing:.4px;color:var(--accent);text-transform:uppercase;margin:9px 2px 4px">${esc(t)} · ${arr.length} pos · ${int(gt)} un</div>`
+      + arr.map(e=>`<div class="lote-row"><span class="mono">${fmt(e)}</span><span class="lr-r">${int(e.q)} un</span></div>`).join('');
+  });
+  return html;
+}
+// barras de ocupação por RUA (verde tem espaço · vermelho lotada)
+function ruasHtml(ruas){
+  if(!ruas.length) return '<div class="empty">Sem ruas.</div>';
+  return `<div style="display:flex;flex-direction:column;gap:7px;margin-top:8px">`+ruas.map(r=>{
+    const c=r.pct>=0.85?C.red:(r.pct>=0.5?C.yellow:C.green);
+    return `<div style="display:flex;align-items:center;gap:10px;font-size:.8rem">
+      <span class="mono" style="width:44px;color:var(--text-dim)">R${int(r.rua)}</span>
+      <span class="oc-bar"><i style="width:${Math.round(r.pct*100)}%;background:${c}"></i></span>
+      <span class="num" style="width:46px;text-align:right">${pct(r.pct)}</span>
+      <span class="muted" style="width:78px;text-align:right;font-size:.72rem">${int(r.ocupadas)}/${int(r.posicoes)}</span>
+    </div>`;
+  }).join('')+`</div>`;
+}
+// ocupação por tipo de endereço (picking × pulmão)
+function tiposHtml(tipos){
+  if(!tipos.length) return '<div class="empty">—</div>';
+  return `<div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">`+tipos.map(t=>{
+    const c=t.pct>=0.85?C.red:(t.pct>=0.5?C.yellow:C.green);
+    return `<div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:.88rem"><b>${esc(t.label)}</b><span class="num">${pct(t.pct)}</span></div>
+      <span class="oc-bar" style="display:block;width:100%;margin-top:5px"><i style="width:${Math.round(t.pct*100)}%;background:${c}"></i></span>
+      <div class="muted" style="font-size:.72rem;margin-top:3px">${int(t.ocupadas)} / ${int(t.posicoes)} posições</div>
+    </div>`;
+  }).join('')+`</div>`;
+}
+async function renderOcupacao(P){
+  const el=$('#v-ocupacao');
+  el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')+`<div class="loader"><div class="spinner"></div>Calculando ocupação…</div>`;
+  let j; try{ j=await getJSON('/api/ocupacao?'+serverQS()); }
+  catch(e){ el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')+`<div class="empty">Ocupação indisponível: ${esc(e.message)}</div>`; return; }
+  const ocup=j.ocupadas||1;
+  const rows=P.filter(p=>(p.pos_end||0)>0).sort((a,b)=>(b.pos_end||0)-(a.pos_end||0));
+  const mortos=P.filter(p=>p.espaco_morto);
+  const cols=[colCod,colProd,colForn,
+    {key:'pos_end',label:'Posições',num:true,fmt:int},
+    {key:'pos_end',label:'% ocup.',num:true,fmt:v=>dec(v/ocup*100,1)+'%'},
+    {key:'m3_end',label:'m³ end.',num:true,fmt:v=>v?dec(v,2):'—'},
+    colGiroSpark,{key:'cobertura',label:'Cob.',num:true,fmt:cob},
+    {key:'espaco_morto',label:'',html:p=>p.espaco_morto?`<span class="badge" style="background:${C.orange}22;color:${C.orange}">espaço morto</span>`:''}];
+  el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')
+    +`<div class="kpi-grid">
+        ${kpi('Ocupação do depósito',pct(j.pct_ocupado),int(j.ocupadas)+' / '+int(j.posicoes)+' posições',C.accent)}
+        ${kpi('Posições livres',int(j.livres),pct(j.pct_livre)+' livre',C.green)}
+        ${kpi('Produtos endereçados',int(j.produtos),'no depósito',C.accent2)}
+        ${kpi('Média posições/produto',dec(j.media_pos,1),'espalhamento',C.purple)}
+        ${kpi('Espaço morto',int(mortos.length),'ocupam muito · giram pouco',C.orange)}
+      </div>
+      <div class="row">
+        <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas</small></h3>${ruasHtml(j.ruas||[])}
+          <div class="count-line">Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
+        <div class="panel grow" style="flex:1 1 240px"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
+          <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>
+      </div>
+      <div class="panel"><h3>Ocupação por item <small class="muted">· ${int(rows.length)} produtos endereçados · clique p/ ver as posições</small></h3>
+        <div class="count-line">Posições = slots ocupados pelo item · <b>% ocup.</b> = sobre as ${int(j.ocupadas)} posições ocupadas (não o total) · m³ = volume endereçado.</div>
+        ${renderTable(rows,cols,'ocupacao')}</div>`;
+}
 
 /* ───────── dispatch ───────── */
 // tooltip: descrição completa ao passar o mouse — só quando o texto da coluna Produto
@@ -1256,7 +1334,7 @@ function render(){
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
   const P=filtered();
-  ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade}[S.view]||renderCockpit)(P);
+  ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade,ocupacao:renderOcupacao}[S.view]||renderCockpit)(P);
   savePrefs();
 }
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }

@@ -1253,3 +1253,51 @@ def plano_reposicao(p, params, hoje=None, semanas=12):
         "inbound_zero": receb_prog_total <= 0,
         "sem_giro": False,
     }
+
+
+# ───────────────────────── ocupação / WMS ─────────────────────────
+TIPO_WMS = {"AP": "Picking", "AE": "Pulmão"}
+
+
+def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None):
+    """KPIs de ocupação do depósito + ocupação por RUA e por tipo (picking/pulmão).
+    Denominador = posições ativas (PCENDERECO); ocupadas = posições distintas com QT>0.
+    media_pos = pares (produto×posição) / produtos endereçados."""
+    k = kpi_rows[0] if kpi_rows else {}
+    pos = int(_n(k.get("posicoes")))
+    occ = int(_n(k.get("ocupadas")))
+    prod = int(_n(k.get("produtos")))
+    pares = int(_n(k.get("pares")))
+    livres = max(0, pos - occ)
+    ruas = []
+    for r in (rua_rows or []):
+        rp = int(_n(r.get("posicoes")))
+        ro = int(_n(r.get("ocupadas")))
+        if rp <= 0:
+            continue
+        rua = r.get("RUA")
+        ruas.append({
+            "rua": int(_n(rua)) if rua is not None else None,
+            "posicoes": rp, "ocupadas": ro,
+            "pct": _round(ro / rp, 4) if rp else 0,
+        })
+    ruas.sort(key=lambda x: (x["pct"], x["posicoes"]), reverse=True)
+    tipos = []
+    for r in (tipo_rows or []):
+        rp = int(_n(r.get("posicoes")))
+        if rp <= 0:
+            continue
+        ro = int(_n(r.get("ocupadas")))
+        cod = r.get("TIPOENDER")
+        tipos.append({
+            "tipo": cod, "label": TIPO_WMS.get(cod, cod or "—"),
+            "posicoes": rp, "ocupadas": ro, "pct": _round(ro / rp, 4) if rp else 0,
+        })
+    tipos.sort(key=lambda x: x["posicoes"], reverse=True)
+    return {
+        "posicoes": pos, "ocupadas": occ, "livres": livres, "produtos": prod,
+        "pct_ocupado": _round(occ / pos, 4) if pos else 0,
+        "pct_livre": _round(livres / pos, 4) if pos else 0,
+        "media_pos": _round(pares / prod, 2) if prod else 0,
+        "ruas": ruas, "tipos": tipos,
+    }
