@@ -234,7 +234,23 @@ function renderCockpit(P){
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
    <div class="row">
-     <div class="panel grow"><h3>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'}) <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3><div class="chart-box sm" style="height:190px"><canvas id="ch-abc"></canvas></div>
+     <div class="panel grow"><h3>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'}) <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3>
+       <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+         <div class="chart-box sm" style="height:190px;flex:2 1 300px;min-width:0"><canvas id="ch-abc"></canvas></div>
+         <div style="flex:1 1 240px;min-width:220px">
+           <div class="count-line" style="margin:0 0 8px">Participação dos itens (quantidade)</div>
+           <div style="display:flex;align-items:center;gap:16px">
+             <div style="position:relative;height:150px;width:150px;flex:none">
+               <canvas id="ch-abc-itens"></canvas>
+               <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
+                 <div style="font-size:1.3rem;font-weight:700;color:var(--text);line-height:1">${int(totItens)}</div>
+                 <div style="font-size:.6rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px">itens</div>
+               </div>
+             </div>
+             <div id="abc-itens-leg" style="display:flex;flex-direction:column;gap:10px"></div>
+           </div>
+         </div>
+       </div>
        <table class="mini" style="margin-top:10px">${['A','B','C'].map(c=>{const _v=S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda,_t=S.abcLens==='estoque'?k.valor_total:k.venda_total;return `<tr><td>Curva ${c}</td><td class="num">${int(k.abc[c].qt)} itens</td><td class="num">${money(_v)}</td><td class="num">${dec(k.abc[c].qt/totItens*100,0)}% dos itens</td><td class="num">${dec(_t?_v/_t*100:0,0)}% ${S.abcLens==='estoque'?'do estoque':'da venda'}</td></tr>`;}).join('')}</table>
      </div>
    </div>
@@ -243,6 +259,9 @@ function renderCockpit(P){
      <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
    </div>`;
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+  // rosca de participação dos itens por curva (quantidade) — cores fixas A/B/C (verde/azul/cinza), borda = surface p/ respiro
+  chart('ch-abc-itens',{type:'doughnut',data:{labels:['Curva A','Curva B','Curva C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].qt),backgroundColor:[C.green,C.accent,C.dim],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},options:{cutout:'64%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' itens ('+dec(totItens?c.raw/totItens*100:0,1)+'%)'}}}}});
+  const _abcLeg=$('#abc-itens-leg'); if(_abcLeg) _abcLeg.innerHTML=['A','B','C'].map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;white-space:nowrap"><span style="width:11px;height:11px;border-radius:3px;background:${[C.green,C.accent,C.dim][i]};flex:none"></span><b>Curva ${c}</b> <span style="color:var(--text-dim)">${int(k.abc[c].qt)} · ${dec(k.abc[c].qt/totItens*100,0)}%</span></div>`).join('');
   document.querySelectorAll('[data-abclens]').forEach(b=>b.onclick=()=>{S.abcLens=b.dataset.abclens;render();});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
   const topVen=(S.validade?.lotes||[]).slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
