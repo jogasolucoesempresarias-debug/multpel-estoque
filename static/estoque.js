@@ -571,12 +571,15 @@ async function renderVencidos(){
           <div class="grow"><div class="chart-box sm" style="height:190px"><canvas id="ch-ven"></canvas></div></div>
           <div style="flex:0 0 300px;max-width:300px" id="ven-meses"></div>
         </div></div>
-      <div class="panel" id="ven-estoque"></div>
       <div class="row" style="align-items:flex-start">
         <div class="panel grow" id="ven-comp"></div>
         <div class="panel grow" id="ven-forn"></div>
       </div>
-      <div class="panel" id="ven-tbl"></div>`;
+      <div class="panel" id="ven-tbl"></div>
+      <div class="panel" id="ven-estoque"></div>`;
+      // ↑ "ainda em estoque" fica POR ÚLTIMO de propósito: é a única visão que ignora o mês
+      //   (olha o histórico todo p/ medir reincidência). Junto do gráfico de meses, dava a
+      //   impressão errada de que deveria filtrar ao clicar num mês.
 
   // ── tabela de meses (o pedido do diretor) ──
   const mrows=[...meses].sort((a,b)=>a.mes<b.mes?1:-1);
@@ -593,7 +596,10 @@ async function renderVencidos(){
     {k:'vezes',label:'Vezes',num:1},{k:'qt',label:'Qt perdida',num:1},{k:'valor',label:'Já perdido',num:1},
     {k:'qtdisp',label:'Em estoque',num:1},{k:'ultima',label:'Última perda',num:1}];
   const esk=S.sort['vencidos_est']||{key:'valor',dir:-1};
-  $('#ven-estoque').innerHTML=`<h3>⚠️ Já venceu e ainda está em estoque <small class="muted">· risco de vencer de novo</small></h3>`
+  $('#ven-estoque').innerHTML=`<h3>⚠️ Já venceu e ainda está em estoque
+      <small class="muted">· risco de vencer de novo · ${S.venMes
+        ? `<b>histórico completo — não filtra por ${mesLbl(S.venMes)}</b>`
+        : 'considera todo o histórico, independe do mês'}</small></h3>`
     +(emEst.length?`<div class="count-line">${int(emEst.length)} produtos · ${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos</div>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(ecols,esk)}</tr></thead><tbody>${
         _sortArr(emEst,esk).slice(0,100).map(p=>`<tr data-cod="${p.codprod}" style="cursor:pointer">
