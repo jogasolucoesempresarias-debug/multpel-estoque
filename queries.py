@@ -491,3 +491,11 @@ SELECTCOLUMNS(
     "codprod", CALCULATE(MAX(PCESTENDERECO[CODPROD])),
     "nprod",   CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODPROD]))
 )"""
+
+
+def q_desc_de(codprods):
+    """DESCRICAO de uma lista de códigos direto do PCPRODUT (SEM filtro REVENDA/FL) —
+    resolve nome de item zerado/fora-de-linha que não está no snapshot nem no cadastro."""
+    lista = "{" + ",".join(str(int(c)) for c in codprods) + "}"
+    return (f'EVALUATE SELECTCOLUMNS(FILTER(PCPRODUT, PCPRODUT[CODPROD] IN {lista}), '
+            f'"CODPROD", PCPRODUT[CODPROD], "DESCRICAO", PCPRODUT[DESCRICAO])')

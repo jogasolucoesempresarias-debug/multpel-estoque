@@ -593,6 +593,17 @@ def api_ocupacao():
                                        pbi.run_dax(Q.q_ocupacao_por_rua(filiais)),
                                        pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)),
                                        pbi.run_dax(Q.q_ocupacao_vazias(filiais)))
+            # descrição das vagas reservadas vem do PCPRODUT completo (itens zerados/FL
+            # não estão no snapshot nem no cadastro de revenda)
+            cods = sorted({v["codprod"] for v in hit.get("vazias", []) if v.get("codprod") is not None})
+            if cods:
+                try:
+                    dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+                    for v in hit["vazias"]:
+                        if v.get("codprod") is not None and dm.get(v["codprod"]):
+                            v["descricao"] = dm[v["codprod"]]
+                except Exception as e:
+                    print(f"[ocupacao] descrições das vagas indisponíveis ({e}).")
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 502
         pbi._CACHE.set(key, hit, 1800)

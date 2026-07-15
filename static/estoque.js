@@ -1324,7 +1324,8 @@ function vaziasPanel(j){
   return `<div class="panel"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(j.vazias_total)} vagas · o que reservou cada uma</small></h3>
     <div class="count-line">O WMS marca a posição como ocupada mas não há mercadoria. <b>Endereço fixo</b> → normal (a vaga é do produto, vai repor); senão, dá pra liberar. Clique p/ abrir o produto.</div>
     <div class="tbl-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto que reservou a vaga</th></tr></thead>
-    <tbody>${list.map(v=>`<tr ${v.codprod?`data-cod="${v.codprod}" style="cursor:pointer"`:''}><td class="mono">${esc(v.end)}</td><td>${esc(v.tipo)}</td><td class="num">${v.codprod||'—'}</td><td><span class="prod" title="${esc(dm[v.codprod]||'')}">${esc(dm[v.codprod]||(v.codprod?('Produto '+v.codprod):'— sem produto'))}</span></td></tr>`).join('')}</tbody></table></div></div>`;
+    <tbody>${list.map(v=>{const nm=v.descricao||dm[v.codprod]||(v.codprod?('Produto '+v.codprod):'— sem produto');
+      return `<tr ${v.codprod?`data-cod="${v.codprod}" style="cursor:pointer"`:''}><td class="mono">${esc(v.end)}</td><td>${esc(v.tipo)}</td><td class="num">${v.codprod||'—'}</td><td><span class="prod" title="${esc(nm)}">${esc(nm)}</span></td></tr>`;}).join('')}</tbody></table></div></div>`;
 }
 
 /* ───────── dispatch ───────── */
