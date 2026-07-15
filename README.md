@@ -14,6 +14,7 @@ Flask + Waitress · HTML/JS + Chart.js · Power BI executeQueries (datasets **Es
 ## Dados / metodologia (resumo) — v3
 Consome **4 tabelas novas do Winthor** no dataset Estoque: **PCPEDIDO/PCITEM** (pedido de compra real),
 **PCEMBALAGEM** (caixa/cubagem) e **PCEMPR** (comprador no próprio dataset).
+Para a aba **Vencidos**, +4: **PCLANC/PCCONTA** (lançamento da conta 200042) e **PCNFSAID/PCMOV** (nota e itens da baixa).
 - **Estoque (Disponível / QTDISP)** = **gerencial** líquido: `QTESTGER − avaria (QTBLOQUEADA) − reserva (QTRESERV)`, filiais 3+5 (decisão do diretor 07/2026 — itens em avaria/reservados não estão disponíveis p/ venda; substitui o "QTESTGER cru" anterior). **Endereçado** (`PCESTENDERECO`, RUA≠99) **só na validade/FEFO** (estoque por lote).
 - **Giro** = média dos 3 últimos meses (`QTVENDMES1..3`/3); toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`.
 - **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME` (no próprio dataset Estoque; RCA só p/ venda).
@@ -21,6 +22,10 @@ Consome **4 tabelas novas do Winthor** no dataset Estoque: **PCPEDIDO/PCITEM** (
 - **Orçamento** = meta `65% da venda líquida 30d` por comprador (RCA) × realizado lido **direto do Winthor**; acompanhamento de pedidos por previsão de entrega (híbrido `DTPREVENT`/emissão+lead); logística por cubagem.
 - **Venda/lucro/margem** = `FATURAMENTO_VENDAS` (RCA), líquida (− devoluções), por período.
 - **Unidades de negócio**: filtro por unidade (escopa a venda por filial, com código da filial no seletor).
+- **Vencidos** (perda de validade) — aba nova, contraponto do Validade/FEFO: lá é **risco futuro**, aqui é **perda realizada**. Fonte: `PCLANC` conta **200042 = PERDA VALIDADE** → `PCNFSAID` → `PCMOV` (+ PCPRODUT/PCFORNEC/PCEMPR p/ produto/fornecedor/comprador). Tabela **por mês** (pedido do diretor) + detalhe igual à planilha `VENCIDOS`, e o cruzamento **"já venceu e ainda está em estoque"** (risco de repetir).
+  - ⚠️ **O join é por `NUMTRANSVENDA`, NUNCA por `NUMNOTA`.** `NUMNOTA` se repete ao longo dos anos (a nota 5548 aparece com **15 datas** distintas, 2007→2024) — juntar por ela infla o resultado **3,5×** (1.308 linhas vs. **377** reais) e o `SELECT DISTINCT` **não** corrige (as linhas diferem pela DTSAIDA). `NUMTRANSVENDA` é 1:1 com a nota (163 linhas = 163 chaves distintas, validado).
+  - Escopo **filiais 3+5** (padrão do app) = 376 dos 377 itens. As filiais 4/7/8/14 que apareciam na query original eram **lixo da colisão** de NUMNOTA.
+  - **3 lançamentos ficam de fora** (`NUMTRANSVENDA IS NULL`): 2 são perdas registradas na **entrada** (`NUMTRANSENT` — precisariam do `PCNFENT`) e 1 é antigo. Nenhum é saída, então não caberiam na visão por `DTSAIDA` da planilha.
 - **Navegação** em 2 níveis: Visão · Comprar · Pedidos · Estoque · Análise. A aba **Visão** é dividida em **Cockpit** + **Painel gerencial** (5 pilares); o painel mostra "Venda perdida/mês" (não "Valor em ruptura"), coluna **Avaria** e colunas em **caixa** (Disp. cx, Giro cx, Sugerido cx). Filtros são por aba.
 - Metodologia v3 completa (fórmulas decodificadas da planilha) em **`docs/planilha_v3.md`**.
 

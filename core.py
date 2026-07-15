@@ -1114,6 +1114,113 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
 
 
 # ───────────────────────── validade / FEFO ─────────────────────────
+def vencidos_por_mes(rows, produtos_idx=None):
+    """Perda por VALIDADE (conta 200042) por mês — espelha a planilha VENCIDOS do diretor.
+
+    rows: saída de q_vencidos (grão = item da nota, já escopado na conta 200042).
+    produtos_idx: {codprod: produto} do snapshot atual. Serve p/ marcar o item que já
+    venceu e **ainda está na casa** (qtdisp > 0) = risco de vencer de novo — é o
+    contraponto do validade_fefo (que olha risco futuro; aqui é perda realizada).
+    """
+    idx = produtos_idx or {}
+    itens = []
+    for r in rows:
+        dt = _parse_dt(r.get("dtsaida"))
+        cod = r.get("codprod")
+        cod = int(_n(cod)) if cod is not None else None
+        qt, punit = _n(r.get("qt")), _n(r.get("punit"))
+        p = idx.get(cod) or {}
+        qtdisp = _n(p.get("qtdisp"))
+        itens.append({
+            "dtsaida": dt.isoformat() if dt else None,
+            "mes": dt.strftime("%Y-%m") if dt else None,
+            "numnota": int(_n(r.get("numnota"))),
+            "codprod": cod,
+            "descricao": r.get("descricao") or p.get("descricao") or "—",
+            "qt": _round(qt),
+            "punit": _round(punit, 6),
+            "total": _round(_n(r.get("total")) or qt * punit),
+            "codfornec": int(_n(r.get("codfornec"))) or None,
+            "fornecedor": r.get("fornecedor") or "—",
+            "codcomprador": int(_n(r.get("codcomprador"))) or None,
+            "comprador": r.get("comprador") or "Sem comprador",
+            "codfilial": str(r.get("codfilial") or ""),
+            "curva_abc": p.get("curva_abc"),
+            "qtdisp": _round(qtdisp),
+            "em_estoque": qtdisp > 0,
+        })
+    itens.sort(key=lambda x: (x["dtsaida"] or "", x["total"]), reverse=True)
+
+    # por mês (o pedido do diretor)
+    mm = {}
+    for i in itens:
+        if not i["mes"]:
+            continue
+        g = mm.setdefault(i["mes"], {"mes": i["mes"], "itens": 0, "qt": 0.0, "valor": 0.0, "produtos": set()})
+        g["itens"] += 1
+        g["qt"] += i["qt"]
+        g["valor"] += i["total"]
+        g["produtos"].add(i["codprod"])
+    meses = []
+    for g in mm.values():
+        meses.append({"mes": g["mes"], "itens": g["itens"], "qt": _round(g["qt"]),
+                      "valor": _round(g["valor"]), "produtos": len(g["produtos"])})
+    meses.sort(key=lambda x: x["mes"], reverse=True)
+
+    # rankings (comprador / fornecedor)
+    def _rank(cod_key, nome_key):
+        g = {}
+        for i in itens:
+            d = g.setdefault(i[nome_key], {"nome": i[nome_key], "cod": i.get(cod_key),
+                                           "itens": 0, "qt": 0.0, "valor": 0.0})
+            d["itens"] += 1
+            d["qt"] += i["qt"]
+            d["valor"] += i["total"]
+        for d in g.values():
+            d["qt"], d["valor"] = _round(d["qt"]), _round(d["valor"])
+        return sorted(g.values(), key=lambda x: -x["valor"])
+
+    # por produto — base do painel "ainda em estoque"
+    pp = {}
+    for i in itens:
+        d = pp.setdefault(i["codprod"], {
+            "codprod": i["codprod"], "descricao": i["descricao"],
+            "fornecedor": i["fornecedor"], "codfornec": i["codfornec"],
+            "comprador": i["comprador"], "codcomprador": i["codcomprador"], "curva_abc": i["curva_abc"],
+            "vezes": 0, "qt": 0.0, "valor": 0.0, "ultima": None,
+            "qtdisp": i["qtdisp"], "em_estoque": i["em_estoque"]})
+        d["vezes"] += 1
+        d["qt"] += i["qt"]
+        d["valor"] += i["total"]
+        if (i["dtsaida"] or "") > (d["ultima"] or ""):
+            d["ultima"] = i["dtsaida"]
+    for d in pp.values():
+        d["qt"], d["valor"] = _round(d["qt"]), _round(d["valor"])
+    produtos = sorted(pp.values(), key=lambda x: -x["valor"])
+    em_estoque = [p for p in produtos if p["em_estoque"]]
+
+    pior = max(meses, key=lambda m: m["valor"]) if meses else None
+    return {
+        "resumo": {
+            "itens": len(itens),
+            "qt": _round(sum(i["qt"] for i in itens)),
+            "valor": _round(sum(i["total"] for i in itens)),
+            "produtos": len(pp),
+            "meses": len(meses),
+            "mes_pior": pior["mes"] if pior else None,
+            "mes_pior_valor": pior["valor"] if pior else 0,
+            "em_estoque_n": len(em_estoque),
+            "em_estoque_valor": _round(sum(p["valor"] for p in em_estoque)),
+        },
+        "meses": meses,
+        "itens": itens,
+        "produtos": produtos,
+        "em_estoque": em_estoque,
+        "por_comprador": _rank("codcomprador", "comprador"),
+        "por_fornecedor": _rank("codfornec", "fornecedor"),
+    }
+
+
 def validade_fefo(lotes, produtos_idx, params, hoje=None):
     hoje = hoje or date.today()
     # unifica lotes do MESMO produto + validade (soma a qtd) — evita linhas repetidas do mesmo

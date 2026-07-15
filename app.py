@@ -536,6 +536,16 @@ def api_validade():
     return jsonify({"ok": True, "horizonte": dias, "resumo": resumo, "lotes": fefo})
 
 
+@app.route("/api/vencidos")
+def api_vencidos():
+    """Perda por validade (conta 200042) por mês — replica a planilha VENCIDOS do diretor
+    e cruza com o estoque atual (item que já venceu e ainda está na casa)."""
+    produtos, params, filiais = _build_produtos()
+    idx = {p["codprod"]: p for p in produtos}
+    rows = pbi.run_dax(Q.q_vencidos(filiais))
+    return jsonify({"ok": True, **core.vencidos_por_mes(rows, idx)})
+
+
 @app.route("/api/resumos")
 def api_resumos():
     """Painel gerencial do diretor: 2 blocos-resumo (itens a vencer por faixa de validade +
@@ -786,6 +796,24 @@ def _export_data(view):
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
                 "yoy", "yoy_lucro", "status_lucro"]
+    elif view == "vencidos":
+        # perda por validade (conta 200042). Não passa por _aplicar_filtros_cliente: o grão é
+        # item-da-nota (evento histórico), não produto — os filtros de estoque não se aplicam.
+        # Espelha a tela: filtro de comprador (topo) + mês clicado no gráfico/tabela.
+        produtos, _, filiais = _build_produtos()
+        idx = {p["codprod"]: p for p in produtos}
+        linhas = core.vencidos_por_mes(pbi.run_dax(Q.q_vencidos(filiais)), idx)["itens"]
+        cc = request.args.get("comprador_cod")
+        if cc:
+            linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
+        fn = request.args.get("fornec")
+        if fn:
+            linhas = [l for l in linhas if str(l.get("codfornec")) == fn]
+        vm = request.args.get("ven_mes")
+        if vm:
+            linhas = [l for l in linhas if l.get("mes") == vm]
+        cols = ["dtsaida", "mes", "numnota", "codfornec", "fornecedor", "codprod", "descricao",
+                "qt", "punit", "total", "comprador", "codfilial", "qtdisp"]
     elif view == "conferencia":
         # relatório de conferência de uma rua (ordem de caminhada). cego=1 -> sem a qtd do
         # sistema e com coluna em branco p/ anotar a contagem.
@@ -895,11 +923,18 @@ _PDF_COLS = {
                    ("lucro_bruto", "Lucro bruto", "money"), ("margem", "Margem", "pct"),
                    ("devolucao", "Devolução", "money"), ("part_lucro", "% Lucro", "num"),
                    ("yoy", "AA Venda", "pct"), ("yoy_lucro", "AA Lucro", "pct")],
+    # espelha a planilha VENCIDOS do diretor (+ qtdisp: o que ainda está na casa)
+    "vencidos": [("dtsaida", "Data", "date"), ("numnota", "Nota", "text"),
+                 ("fornecedor", "Fornecedor", "text", 24), ("codprod", "Cód", "text"),
+                 ("descricao", "Produto", "text", 34), ("qt", "Qtd", "int"),
+                 ("punit", "P.unit.", "money"), ("total", "Total", "money"),
+                 ("comprador", "Comprador", "text", 18), ("qtdisp", "Em estoque", "int")],
 }
 _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
-               "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial"}
+               "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial",
+               "vencidos": "Vencidos — perda por validade"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):

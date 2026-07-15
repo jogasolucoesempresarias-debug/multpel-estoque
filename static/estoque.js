@@ -18,6 +18,7 @@ const S = {
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
+  vencidos:null, vencidosQS:'', venMes:null,   // aba Vencidos (perda de validade) — cache por QS + mês selecionado
 };
 
 /* ───────── helpers ───────── */
@@ -44,7 +45,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
@@ -193,6 +194,7 @@ function exportQS(){
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
   if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
+  if(S.venMes && S.view==='vencidos') p.set('ven_mes',S.venMes);
   if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
   if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
@@ -531,6 +533,133 @@ function renderValidade(){
     plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'risco '+money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   wirePlanoCells();
 }
+/* ───────── Vencidos (perda de validade — conta 200042) ─────────
+   Contraponto do Validade/FEFO: lá é risco futuro, aqui é perda REALIZADA.
+   Fonte: /api/vencidos (PCLANC 200042 → PCNFSAID → PCMOV, join por NUMTRANSVENDA). */
+async function renderVencidos(){
+  const el=$('#v-vencidos'), qs=serverQS();
+  if(!S.vencidos || S.vencidosQS!==qs){          // cache por QS: clicar num mês não refaz o fetch
+    el.innerHTML=`<div class="loader"><div class="spinner"></div>Carregando vencidos…</div>`;
+    try{ S.vencidos=await getJSON('/api/vencidos?'+qs); S.vencidosQS=qs; }
+    catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar vencidos: ${esc(e.message)}</div>`; return; }
+  }
+  const J=S.vencidos;
+  // filtros do topo (mesma semântica das outras abas): comprador + fornecedor
+  const fc=S.cli.comprador, ff=S.cli.fornec;
+  const keep=r=>(!fc||String(r.codcomprador)===fc) && (!ff||String(r.codfornec)===ff);
+  let itens=(J.itens||[]).filter(keep);
+  if(S.venMes) itens=itens.filter(i=>i.mes===S.venMes);
+
+  // meses recalculados a partir das linhas visíveis → respeitam o filtro de comprador
+  const mm={}; (J.itens||[]).filter(keep).forEach(i=>{ if(!i.mes)return;
+    const g=mm[i.mes]=mm[i.mes]||{mes:i.mes,itens:0,qt:0,valor:0}; g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
+  const meses=Object.values(mm).sort((a,b)=>a.mes<b.mes?1:-1);
+  const tot=(k)=>itens.reduce((s,i)=>s+(i[k]||0),0);
+  const emEst=(J.em_estoque||[]).filter(p=>(!fc||String(p.codcomprador)===fc)&&(!ff||String(p.codfornec)===ff));
+  const pior=meses.length?meses.reduce((a,b)=>b.valor>a.valor?b:a):null;
+  const mesLbl=m=>{const[a,b]=m.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+b-1]+'/'+a.slice(2);};
+
+  el.innerHTML=head('Vencidos — perda por validade','vencidos')
+    +`<div class="kpi-grid">
+        ${kpi('Valor perdido',money(tot('total')),`${int(itens.length)} itens · ${int(tot('qt'))} un`,C.red)}
+        ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),`em ${int(meses.length)} meses`,C.orange)}
+        ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
+        ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos`,C.purple)}
+      </div>
+      <div class="panel"><h3>Por mês <small class="muted">· clique num mês p/ filtrar o detalhe</small></h3>
+        <div class="row" style="align-items:flex-start">
+          <div class="grow"><div class="chart-box sm" style="height:190px"><canvas id="ch-ven"></canvas></div></div>
+          <div style="flex:0 0 300px;max-width:300px" id="ven-meses"></div>
+        </div></div>
+      <div class="panel" id="ven-estoque"></div>
+      <div class="row" style="align-items:flex-start">
+        <div class="panel grow" id="ven-comp"></div>
+        <div class="panel grow" id="ven-forn"></div>
+      </div>
+      <div class="panel" id="ven-tbl"></div>`;
+
+  // ── tabela de meses (o pedido do diretor) ──
+  const mrows=[...meses].sort((a,b)=>a.mes<b.mes?1:-1);
+  $('#ven-meses').innerHTML=`<div class="tbl-wrap" style="max-height:190px;overflow:auto"><table>
+    <thead><tr><th>Mês</th><th class="num">Itens</th><th class="num">Valor</th></tr></thead>
+    <tbody>${mrows.map(m=>`<tr data-mes="${m.mes}" style="cursor:pointer;${S.venMes===m.mes?'background:var(--surface3);':''}">
+      <td>${mesLbl(m.mes)}</td><td class="num">${int(m.itens)}</td><td class="num">${money(m.valor)}</td></tr>`).join('')
+      ||'<tr><td colspan="3" class="muted">—</td></tr>'}</tbody></table></div>`;
+  el.querySelectorAll('tr[data-mes]').forEach(tr=>tr.onclick=()=>{
+    S.venMes=(S.venMes===tr.dataset.mes)?null:tr.dataset.mes; render(); });
+
+  // ── MELHORIA: já venceu e AINDA está em estoque = risco de vencer de novo ──
+  const ecols=[{k:'codprod',label:'Cód',num:1},{k:'descricao',label:'Produto'},{k:'fornecedor',label:'Fornecedor'},
+    {k:'vezes',label:'Vezes',num:1},{k:'qt',label:'Qt perdida',num:1},{k:'valor',label:'Já perdido',num:1},
+    {k:'qtdisp',label:'Em estoque',num:1},{k:'ultima',label:'Última perda',num:1}];
+  const esk=S.sort['vencidos_est']||{key:'valor',dir:-1};
+  $('#ven-estoque').innerHTML=`<h3>⚠️ Já venceu e ainda está em estoque <small class="muted">· risco de vencer de novo</small></h3>`
+    +(emEst.length?`<div class="count-line">${int(emEst.length)} produtos · ${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos</div>
+      <div class="tbl-wrap"><table><thead><tr>${sortTh(ecols,esk)}</tr></thead><tbody>${
+        _sortArr(emEst,esk).slice(0,100).map(p=>`<tr data-cod="${p.codprod}" style="cursor:pointer">
+          <td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td>
+          <td><span class="prod" title="${esc(p.fornecedor)}">${esc(p.fornecedor)}</span></td>
+          <td class="num">${int(p.vezes)}</td><td class="num">${int(p.qt)}</td><td class="num">${money(p.valor)}</td>
+          <td class="num">${int(p.qtdisp)}</td><td class="num">${dt((p.ultima||'').slice(0,10))}</td></tr>`).join('')
+      }</tbody></table></div>`
+    :`<div class="empty">Nenhum item vencido continua em estoque. 👏</div>`);
+  wireSortTbl($('#ven-estoque'),'vencidos_est',render);
+  $('#ven-estoque').querySelectorAll('tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
+
+  // ── rankings ──
+  // attr: 'data-comp' (comprador) ou 'data-forn' (fornecedor) — ambos clicáveis p/ filtrar
+  const rank=(arr,titulo,attr,selCod)=>{const t=arr.reduce((s,g)=>s+(g.valor||0),0);
+    return `<h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
+      <div class="tbl-wrap" style="max-height:280px;overflow:auto"><table>
+      <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">%</th><th class="num">Itens</th></tr></thead>
+      <tbody>${arr.slice(0,15).map(g=>{const sel=g.cod!=null&&String(g.cod)===selCod;
+        return `<tr ${attr}="${g.cod!=null?g.cod:''}" style="${g.cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}">
+        <td><span class="prod" title="${esc(g.nome)}">${esc(g.nome)}</span></td><td class="num">${money(g.valor)}</td>
+        <td class="num">${t?pct(g.valor/t):'—'}</td><td class="num">${int(g.itens)}</td></tr>`;}).join('')
+        ||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table></div>`;};
+  const rk=(cod_key,nome_key,base)=>{const g={}; base.forEach(i=>{const d=g[i[nome_key]]=g[i[nome_key]]||{nome:i[nome_key],cod:i[cod_key],itens:0,valor:0};
+    d.itens++; d.valor+=i.total||0;}); return Object.values(g).sort((a,b)=>b.valor-a.valor);};
+  $('#ven-comp').innerHTML=rank(rk('codcomprador','comprador',itens),'Perda por comprador','data-comp',S.cli.comprador);
+  $('#ven-forn').innerHTML=rank(rk('codfornec','fornecedor',itens),'Perda por fornecedor','data-forn',S.cli.fornec);
+  wirePorComprador($('#ven-comp'));
+  // clique no fornecedor = mesmo efeito de digitar no filtro do topo (mantém a UI em sincronia)
+  $('#ven-forn').querySelectorAll('tr[data-forn]').forEach(tr=>{const cod=tr.dataset.forn; if(!cod)return;
+    tr.onclick=()=>{ S.cli.fornec=(S.cli.fornec===cod)?'':cod;
+      const inp=$('#f-fornec');
+      if(inp){ const m=(S.fornecedores||[]).find(x=>String(x.codfornec)===S.cli.fornec);
+               inp.value=m?`${m.codfornec} · ${m.fornecedor}`:''; }
+      render(); };});
+
+  // ── detalhe: igual a planilha VENCIDOS do diretor ──
+  const dcols=[{k:'dtsaida',label:'Data',num:1},{k:'numnota',label:'Nota',num:1},{k:'codfornec',label:'Cód forn.',num:1},
+    {k:'fornecedor',label:'Fornecedor'},{k:'codprod',label:'Cód',num:1},{k:'descricao',label:'Produto'},
+    {k:'qt',label:'Qt',num:1},{k:'punit',label:'P. unit.',num:1},{k:'total',label:'Total',num:1},{k:'comprador',label:'Comprador'}];
+  const dsk=S.sort['vencidos']||{key:'dtsaida',dir:-1};
+  $('#ven-tbl').innerHTML=`<h3>Detalhe${S.venMes?` — ${mesLbl(S.venMes)}`:''}
+      ${S.venMes?`<small class="muted">· <a href="#" id="ven-clear">limpar filtro do mês</a></small>`:''}</h3>
+    <div class="count-line">${int(itens.length)} itens · ${money(tot('total'))}${itens.length>300?' (mostrando 300)':''}</div>
+    <div class="tbl-wrap"><table><thead><tr>${sortTh(dcols,dsk)}</tr></thead><tbody>${
+      _sortArr(itens,dsk).slice(0,300).map(i=>`<tr data-cod="${i.codprod}" style="cursor:pointer">
+        <td class="num">${dt((i.dtsaida||'').slice(0,10))}</td><td class="num">${i.numnota}</td>
+        <td class="num">${i.codfornec??'—'}</td><td><span class="prod" title="${esc(i.fornecedor)}">${esc(i.fornecedor)}</span></td>
+        <td class="num">${i.codprod}</td><td><span class="prod" title="${esc(i.descricao)}">${esc(i.descricao)}</span></td>
+        <td class="num">${int(i.qt)}</td><td class="num">${money(i.punit)}</td><td class="num">${money(i.total)}</td>
+        <td><span class="prod" title="${esc(i.comprador)}">${esc((i.comprador||'').split(' ')[0]||'—')}</span></td></tr>`).join('')
+      ||'<tr><td colspan="10" class="muted">—</td></tr>'}</tbody></table></div>`;
+  wireSortTbl($('#ven-tbl'),'vencidos',render);
+  $('#ven-tbl').querySelectorAll('tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
+  const vc=$('#ven-clear'); if(vc) vc.onclick=e=>{e.preventDefault();S.venMes=null;render();};
+
+  // ── gráfico: últimos 18 meses, mês selecionado destacado ──
+  const g18=[...meses].sort((a,b)=>a.mes<b.mes?-1:1).slice(-18);
+  chart('ch-ven',{type:'bar',data:{labels:g18.map(m=>mesLbl(m.mes)),datasets:[{data:g18.map(m=>m.valor),
+      backgroundColor:g18.map(m=>(!S.venMes||S.venMes===m.mes)?C.red:'rgba(100,116,139,.28)'),borderRadius:6}]},
+    options:{maintainAspectRatio:false,   // sem isso o Chart.js trava em 2:1 e sobra vão à direita
+      onClick:(ev,els)=>{if(!els||!els.length)return;const m=g18[els[0].index].mes;S.venMes=(S.venMes===m)?null:m;render();},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+g18[c.dataIndex].itens+' itens'}}},
+      scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+}
+
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)
   const sk=S.sort[view]||{key:'dias_para_vencer',dir:1};
   const rows=[...P].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=Infinity;if(y==null)y=Infinity;if(typeof x==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
@@ -1406,6 +1535,7 @@ function render(){
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
+  if(S.view==='vencidos'){ renderVencidos(); savePrefs(); return; }
   const P=filtered();
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade,ocupacao:renderOcupacao}[S.view]||renderCockpit)(P);
   savePrefs();

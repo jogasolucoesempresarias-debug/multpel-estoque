@@ -521,3 +521,49 @@ def q_desc_de(codprods):
     lista = "{" + ",".join(str(int(c)) for c in codprods) + "}"
     return (f'EVALUATE SELECTCOLUMNS(FILTER(PCPRODUT, PCPRODUT[CODPROD] IN {lista}), '
             f'"CODPROD", PCPRODUT[CODPROD], "DESCRICAO", PCPRODUT[DESCRICAO])')
+
+
+# ───────────────────────── vencidos (perda de validade) ─────────────────────────
+def q_vencidos(filiais=None):
+    """Itens baixados por PERDA VALIDADE (conta 200042). Grão = item da nota.
+
+    PCMOV/PCNFSAID/PCLANC já vêm escopados na conta 200042 pela origem (Oracle),
+    por isso PCMOV é o fato e não precisa filtrar conta aqui.
+
+    ⚠️ O join é por NUMTRANSVENDA, **não** por NUMNOTA: NUMNOTA se repete ao longo
+    dos anos (a nota 5548 aparece com 15 datas distintas) e juntar por ela infla o
+    resultado ~3,5x (1.308 linhas vs. 377 reais). NUMTRANSVENDA é 1:1 com a nota.
+
+    Como PCMOV/PCNFSAID/PCPRODUT/PCFORNEC/PCEMPR são ilhas (sem relacionamento no
+    modelo), a costura é por LOOKUPVALUE — mesmo padrão do q_validade.
+    """
+    lista = _lista_filiais_dax(filiais)
+    fato = f"FILTER(PCMOV, PCMOV[CODFILIAL] IN {lista})" if lista else "PCMOV"
+    return f"""EVALUATE
+VAR Base = ADDCOLUMNS({fato},
+    "@dtsaida",   LOOKUPVALUE(PCNFSAID[DTSAIDA],   PCNFSAID[NUMTRANSVENDA], PCMOV[NUMTRANSVENDA]),
+    "@descricao", LOOKUPVALUE(PCPRODUT[DESCRICAO], PCPRODUT[CODPROD], PCMOV[CODPROD]),
+    "@codfornec", LOOKUPVALUE(PCPRODUT[CODFORNEC], PCPRODUT[CODPROD], PCMOV[CODPROD])
+)
+VAR ComForn = ADDCOLUMNS(Base,
+    "@fornecedor", LOOKUPVALUE(PCFORNEC[FORNECEDOR],   PCFORNEC[CODFORNEC], [@codfornec]),
+    "@codcompr",   LOOKUPVALUE(PCFORNEC[CODCOMPRADOR], PCFORNEC[CODFORNEC], [@codfornec])
+)
+VAR Full = ADDCOLUMNS(ComForn,
+    "@comprador", LOOKUPVALUE(PCEMPR[NOME], PCEMPR[MATRICULA], [@codcompr])
+)
+RETURN
+SELECTCOLUMNS(Full,
+    "dtsaida",      [@dtsaida],
+    "numnota",      PCMOV[NUMNOTA],
+    "codprod",      PCMOV[CODPROD],
+    "descricao",    [@descricao],
+    "qt",           PCMOV[QT],
+    "punit",        PCMOV[PUNIT],
+    "total",        PCMOV[QT] * PCMOV[PUNIT],
+    "codfornec",    [@codfornec],
+    "fornecedor",   [@fornecedor],
+    "codcomprador", [@codcompr],
+    "comprador",    [@comprador],
+    "codfilial",    PCMOV[CODFILIAL]
+)"""
