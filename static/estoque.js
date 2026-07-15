@@ -1304,12 +1304,27 @@ async function renderOcupacao(P){
       <div class="row">
         <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas</small></h3>${ruasHtml(j.ruas||[])}
           <div class="count-line">Ocupação pelo <b>WMS (campo SITUAÇÃO)</b> — bate com o Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
-        <div class="panel grow" style="flex:1 1 240px"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
-          <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>
+        <div class="grow" style="flex:1 1 240px;display:flex;flex-direction:column;gap:16px;min-width:0">
+          <div class="panel" style="margin:0"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
+            <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>
+          <div class="panel" style="margin:0"><h3>Reservadas vazias 🔒</h3>
+            <div style="font-size:2.2rem;font-weight:800;line-height:1;color:${C.orange};font-family:'JetBrains Mono',monospace">${int(j.vazias_total||0)}</div>
+            <div class="count-line" style="margin-top:7px">posições que o WMS diz ocupadas mas <b>sem mercadoria</b> · ${int(j.vazias_com_prod||0)} com produto alocado. Lista completa embaixo ↓</div></div>
+        </div>
       </div>
       <div class="panel"><h3>Ocupação por item <small class="muted">· ${int(rows.length)} produtos endereçados · clique p/ ver as posições</small></h3>
         <div class="count-line">Posições = slots <b>com estoque</b> do item · <b>% ocup.</b> = sobre as ${int(j.com_estoque)} posições com estoque (não o total) · m³ = volume endereçado.</div>
-        ${renderTable(rows,cols,'ocupacao')}</div>`;
+        ${renderTable(rows,cols,'ocupacao')}</div>
+      ${vaziasPanel(j)}`;
+}
+// tabela full-width das posições ocupadas-mas-vazias (o "reservado") + produto que alocou a vaga
+function vaziasPanel(j){
+  const list=j.vazias||[]; if(!list.length) return '';
+  const dm={}; (S.produtosAll||[]).forEach(p=>{dm[p.codprod]=p.descricao;});
+  return `<div class="panel"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(j.vazias_total)} vagas · o que reservou cada uma</small></h3>
+    <div class="count-line">O WMS marca a posição como ocupada mas não há mercadoria. <b>Endereço fixo</b> → normal (a vaga é do produto, vai repor); senão, dá pra liberar. Clique p/ abrir o produto.</div>
+    <div class="tbl-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto que reservou a vaga</th></tr></thead>
+    <tbody>${list.map(v=>`<tr ${v.codprod?`data-cod="${v.codprod}" style="cursor:pointer"`:''}><td class="mono">${esc(v.end)}</td><td>${esc(v.tipo)}</td><td class="num">${v.codprod||'—'}</td><td><span class="prod" title="${esc(dm[v.codprod]||'')}">${esc(dm[v.codprod]||(v.codprod?('Produto '+v.codprod):'— sem produto'))}</span></td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
 /* ───────── dispatch ───────── */

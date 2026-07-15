@@ -470,3 +470,24 @@ def q_ocupacao_por_tipo(filiais=None):
         "ocupadas", CALCULATE(COUNTROWS(PCENDERECO), PCENDERECO[SITUACAO] = "O")
     )"""
     return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""
+
+
+def q_ocupacao_vazias(filiais=None):
+    """Posições que o WMS marca Ocupada (SITUACAO="O") mas SEM estoque físico
+    (nenhum registro com QT>0) — o 'reservado vazio' — + o produto alocado à vaga."""
+    lista = _lista_filiais_dax(filiais)
+    fbase = ['PCENDERECO[SITUACAO] = "O"', 'PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    if lista:
+        fbase.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    cond = " && ".join(fbase) + ' && CALCULATE(COUNTROWS(PCESTENDERECO), PCESTENDERECO[QT] > 0) = 0'
+    return f"""EVALUATE
+SELECTCOLUMNS(
+    FILTER(PCENDERECO, {cond}),
+    "rua",     PCENDERECO[RUA],
+    "predio",  PCENDERECO[PREDIO],
+    "nivel",   PCENDERECO[NIVEL],
+    "apto",    PCENDERECO[APTO],
+    "tipo",    PCENDERECO[TIPOENDER],
+    "codprod", CALCULATE(MAX(PCESTENDERECO[CODPROD])),
+    "nprod",   CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODPROD]))
+)"""

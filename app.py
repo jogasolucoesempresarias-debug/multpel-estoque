@@ -591,7 +591,8 @@ def api_ocupacao():
         try:
             hit = core.ocupacao_resumo(pbi.run_dax(Q.q_ocupacao_kpis(filiais)),
                                        pbi.run_dax(Q.q_ocupacao_por_rua(filiais)),
-                                       pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)))
+                                       pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)),
+                                       pbi.run_dax(Q.q_ocupacao_vazias(filiais)))
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 502
         pbi._CACHE.set(key, hit, 1800)

@@ -1259,7 +1259,7 @@ def plano_reposicao(p, params, hoje=None, semanas=12):
 TIPO_WMS = {"AP": "Picking", "AE": "Pulmão"}
 
 
-def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None):
+def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None, vazias_rows=None):
     """KPIs de ocupação do depósito + ocupação por RUA e por tipo (picking/pulmão).
     Denominador = posições ativas (PCENDERECO); ocupadas = posições distintas com QT>0.
     media_pos = pares (produto×posição) / produtos endereçados."""
@@ -1295,9 +1295,23 @@ def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None):
             "posicoes": rp, "ocupadas": ro, "pct": _round(ro / rp, 4) if rp else 0,
         })
     tipos.sort(key=lambda x: x["posicoes"], reverse=True)
+    # posições ocupadas pelo WMS mas sem estoque físico ("reservado vazio") + produto alocado
+    vazias = []
+    for r in (vazias_rows or []):
+        cp = r.get("codprod")
+        vazias.append({
+            "end": "R%d·P%d·N%d·A%d" % (int(_n(r.get("rua"))), int(_n(r.get("predio"))),
+                                        int(_n(r.get("nivel"))), int(_n(r.get("apto")))),
+            "tipo": TIPO_WMS.get(r.get("tipo"), r.get("tipo") or "—"),
+            "codprod": int(_n(cp)) if cp is not None else None,
+            "nprod": int(_n(r.get("nprod"))),
+        })
+    vazias.sort(key=lambda x: (x["codprod"] is None, x["end"]))
+    vazias_com_prod = sum(1 for v in vazias if v["codprod"] is not None)
     return {
         "posicoes": pos, "ocupadas": occ, "livres": livres, "produtos": prod,
         "com_estoque": ce,
+        "vazias": vazias, "vazias_total": len(vazias), "vazias_com_prod": vazias_com_prod,
         "pct_ocupado": _round(occ / pos, 4) if pos else 0,
         "pct_livre": _round(livres / pos, 4) if pos else 0,
         "pct_com_estoque": _round(ce / pos, 4) if pos else 0,
