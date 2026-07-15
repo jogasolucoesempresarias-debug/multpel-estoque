@@ -221,6 +221,8 @@ td .prod { max-width: 210px; overflow: hidden; text-overflow: ellipsis; display:
 .axm-read .ri { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 12px; background: var(--surface2); border-radius: 8px; margin-bottom: 7px; font-size: .79rem; color: var(--text-dim); }
 .axm-read .ri b { font-size: .92rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text); }
 /* ocupação por RUA */
+/* alvo de scroll não pode ficar atrás da topbar/filterbar fixas */
+#oc-conf, #oc-vazias { scroll-margin-top: calc(var(--stick-top, 160px) + 16px); }
 .oc-bar { flex: 1; height: 9px; background: var(--surface2); border-radius: 5px; overflow: hidden; }
 .oc-bar > i { display: block; height: 100%; border-radius: 5px; transition: width .4s cubic-bezier(.22,1,.36,1); }
 

@@ -1254,18 +1254,41 @@ function endsByValidade(ends){
     (m[d]=m[d]||[]).push(`R${int(e.rua)}·P${int(e.predio)}·N${int(e.nivel)}·A${int(e.apto)}`); });
   return m;
 }
-// barras de ocupação por RUA (verde tem espaço · vermelho lotada)
+// barras de ocupação por RUA — 2 COLUNAS (metade da altura → sem buraco na direita)
+// e cada rua é CLICÁVEL: seleciona a rua p/ a lista de conferência.
 function ruasHtml(ruas){
   if(!ruas.length) return '<div class="empty">Sem ruas.</div>';
-  return `<div style="display:flex;flex-direction:column;gap:7px;margin-top:8px">`+ruas.map(r=>{
-    const c=r.pct>=0.85?C.red:(r.pct>=0.5?C.yellow:C.green);
-    return `<div style="display:flex;align-items:center;gap:10px;font-size:.8rem">
-      <span class="mono" style="width:44px;color:var(--text-dim)">R${int(r.rua)}</span>
+  return `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:5px 24px;margin-top:8px">`+ruas.map(r=>{
+    const c=r.pct>=0.85?C.red:(r.pct>=0.5?C.yellow:C.green), on=S.ocRua===r.rua;
+    return `<div class="oc-rua-row" data-rua="${r.rua}" title="Clique p/ montar a conferência da rua" style="display:flex;align-items:center;gap:8px;font-size:.76rem;cursor:pointer;padding:3px 5px;border-radius:6px;${on?`background:rgba(56,189,248,.14);outline:1px solid ${C.accent}`:''}">
+      <span class="mono" style="width:38px;color:${on?C.accent:'var(--text-dim)'}">R${int(r.rua)}</span>
       <span class="oc-bar"><i style="width:${Math.round(r.pct*100)}%;background:${c}"></i></span>
-      <span class="num" style="width:46px;text-align:right">${pct(r.pct)}</span>
-      <span class="muted" style="width:78px;text-align:right;font-size:.72rem">${int(r.ocupadas)}/${int(r.posicoes)}</span>
+      <span class="num" style="width:42px;text-align:right">${pct(r.pct)}</span>
+      <span class="muted" style="width:60px;text-align:right;font-size:.68rem">${int(r.ocupadas)}/${int(r.posicoes)}</span>
     </div>`;
   }).join('')+`</div>`;
+}
+// painel de conferência da rua selecionada (ordem de caminhada + reservadas vazias + export)
+function confPanel(conf){
+  if(!conf) return '';
+  if(conf.erro) return `<div class="panel"><div class="empty">Conferência indisponível: ${esc(conf.erro)}</div></div>`;
+  const its=conf.itens||[], qs=serverQS()+'&rua='+conf.rua+(S.ocCego?'&cego=1':'');
+  return `<div class="panel" id="oc-conf" style="border-color:${C.accent}">
+    <h3>Conferência — Rua ${int(conf.rua)} <small class="muted">· ${int(conf.n_pos)} posições · ${int(conf.n_itens)} itens · ${int(conf.n_vazias)} devem estar vazias</small></h3>
+    <div style="display:flex;gap:8px;margin:8px 0 4px;flex-wrap:wrap">
+      <button class="btn sm" id="oc-cego">${S.ocCego?'✓ Contagem cega':'Contagem cega'}</button>
+      <a class="btn sm" href="/api/export/conferencia.xlsx?${qs}">⬇ Excel</a>
+      <a class="btn sm" href="/api/export/conferencia.pdf?${qs}">⬇ PDF</a>
+      <button class="btn sm" id="oc-conf-x">✕ fechar</button>
+    </div>
+    <div class="count-line">Ordem de caminhada (prédio → nível → apto). ${S.ocCego?'<b>Contagem cega</b>: quantidade oculta — anote o que contar.':'Quantidade do sistema p/ comparar com a prateleira.'} As <b>reservadas vazias</b> entram na lista pra confirmar que estão vazias.</div>
+    <div class="tbl-wrap" style="max-height:560px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto</th><th class="num">${S.ocCego?'Contado':'Qtd (sist.)'}</th><th>Validade</th><th>Situação</th></tr></thead>
+    <tbody>${its.map(x=>{const vz=(x.situacao||'').startsWith('VAZIA');
+      return `<tr ${x.codprod?`data-cod="${x.codprod}" style="cursor:pointer"`:''}><td class="mono">${esc(x.endereco)}</td><td>${esc(x.tipo)}</td><td class="num">${x.codprod||'—'}</td>
+        <td><span class="prod" title="${esc(x.descricao||'')}">${esc(x.descricao||'—')}</span></td>
+        <td class="num">${S.ocCego?'<span class="muted">_____</span>':(vz?'0':int(x.qt))}</td>
+        <td>${x.dtval?dt(x.dtval):'—'}</td>
+        <td>${vz?`<span class="badge" style="background:${C.orange}22;color:${C.orange}">vazia (reservada)</span>`:''}</td></tr>`;}).join('')}</tbody></table></div></div>`;
 }
 // ocupação por tipo de endereço (picking × pulmão)
 function tiposHtml(tipos){
@@ -1288,6 +1311,8 @@ async function renderOcupacao(P){
     catch(e){ el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')+`<div class="empty">Ocupação indisponível: ${esc(e.message)}</div>`; return; }
     S._ocJ=j; S._ocKey=qs;
   }
+  let conf=null;   // conferência da rua selecionada (clique no heatmap)
+  if(S.ocRua!=null){ try{ conf=await getJSON('/api/rua/'+S.ocRua); }catch(e){ conf={erro:e.message}; } }
   const ocup=j.com_estoque||1;   // % por item = sobre as posições COM ESTOQUE (pos_end é QT>0)
   const mortos=P.filter(p=>p.espaco_morto);
   let rows=P.filter(p=>(p.pos_end||0)>0);
@@ -1314,7 +1339,7 @@ async function renderOcupacao(P){
         ${mortoCard}
       </div>
       <div class="row">
-        <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas</small></h3>${ruasHtml(j.ruas||[])}
+        <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas · clique numa rua p/ conferir</small></h3>${ruasHtml(j.ruas||[])}
           <div class="count-line">Ocupação pelo <b>WMS (campo SITUAÇÃO)</b> — bate com o Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
         <div class="grow" style="flex:1 1 240px;display:flex;flex-direction:column;gap:16px;min-width:0">
           <div class="panel" style="margin:0"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
@@ -1324,12 +1349,18 @@ async function renderOcupacao(P){
             <div class="count-line" style="margin-top:7px">posições que o WMS diz ocupadas mas <b>sem mercadoria</b> · ${int(j.vazias_com_prod||0)} com produto alocado. <b>Clique p/ ver a lista ↓</b></div></div>
         </div>
       </div>
+      ${confPanel(conf)}
       <div class="panel"><h3>Ocupação por item <small class="muted">· ${int(rows.length)} produtos${S.ocMorto?` · <span style="color:${C.orange}">filtrando espaço morto</span>`:' endereçados'} · clique p/ ver as posições</small></h3>
         <div class="count-line">Posições = slots <b>com estoque</b> do item · <b>% ocup.</b> = sobre as ${int(j.com_estoque)} posições com estoque (não o total) · m³ = volume endereçado.</div>
         ${renderTable(rows,cols,'ocupacao')}</div>
       ${vaziasPanel(j)}`;
   const cm=$('#oc-card-morto'); if(cm) cm.onclick=()=>{ S.ocMorto=!S.ocMorto; render(); };
   const cv=$('#oc-card-vazias'); if(cv) cv.onclick=()=>{ const t=$('#oc-vazias'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); };
+  // rua clicável → conferência
+  el.querySelectorAll('.oc-rua-row').forEach(x=>x.onclick=()=>{ const r=+x.dataset.rua, on=(S.ocRua===r); S.ocRua=on?null:r; S._ocScroll=!on; render(); });
+  const cx=$('#oc-conf-x'); if(cx) cx.onclick=()=>{ S.ocRua=null; render(); };
+  const cg=$('#oc-cego'); if(cg) cg.onclick=()=>{ S.ocCego=!S.ocCego; render(); };
+  if(conf && !conf.erro && S._ocScroll){ S._ocScroll=false; const t=$('#oc-conf'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); }
 }
 // tabela full-width das posições ocupadas-mas-vazias (o "reservado") + produto que alocou a vaga
 function vaziasPanel(j){

@@ -582,6 +582,37 @@ def api_produto(codprod):
     return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos})
 
 
+def _rua_conferencia(rua):
+    """Lista de conferência de uma rua (com estoque + reservadas vazias) já com descrição."""
+    filiais = _filiais_estoque()
+    key = f"ruaconf:{_filiais_key(filiais)}:{rua}"
+    hit = pbi._CACHE.get(key)
+    if hit is None:
+        hit = core.rua_conferencia(rua,
+                                   pbi.run_dax(Q.q_rua_itens(rua, filiais)),
+                                   pbi.run_dax(Q.q_ocupacao_vazias(filiais, rua=rua)))
+        cods = sorted({x["codprod"] for x in hit if x.get("codprod") is not None})
+        if cods:
+            try:
+                dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+            except Exception as e:
+                print(f"[rua] descrições indisponíveis ({e}).")
+                dm = {}
+            for x in hit:
+                cp = x.get("codprod")
+                x["descricao"] = dm.get(cp) or (f"Produto {cp}" if cp else "— sem produto")
+        pbi._CACHE.set(key, hit, 900)
+    return hit
+
+
+@app.route("/api/rua/<int:rua>")
+def api_rua(rua):
+    itens = _rua_conferencia(rua)
+    return jsonify({"ok": True, "rua": rua, "itens": itens, "n_pos": len(itens),
+                    "n_itens": len({x["codprod"] for x in itens if x.get("codprod")}),
+                    "n_vazias": sum(1 for x in itens if (x.get("situacao") or "").startswith("VAZIA"))})
+
+
 @app.route("/api/ocupacao")
 def api_ocupacao():
     filiais = _filiais_estoque()
@@ -755,6 +786,16 @@ def _export_data(view):
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
                 "yoy", "yoy_lucro", "status_lucro"]
+    elif view == "conferencia":
+        # relatório de conferência de uma rua (ordem de caminhada). cego=1 -> sem a qtd do
+        # sistema e com coluna em branco p/ anotar a contagem.
+        linhas = [dict(x) for x in _rua_conferencia(int(request.args.get("rua") or 0))]
+        if request.args.get("cego") == "1":
+            for l in linhas:
+                l["contado"] = ""
+            cols = ["endereco", "tipo", "codprod", "descricao", "dtval", "situacao", "contado"]
+        else:
+            cols = ["endereco", "tipo", "codprod", "descricao", "qt", "dtval", "situacao"]
     else:
         produtos, _, _ = _build_produtos()
         produtos = _aplicar_filtros_cliente(produtos)
@@ -812,6 +853,9 @@ def api_export_xlsx(view):
 # ───────────────────────── export PDF (mesma estética do Multpel HTML) ─────────────
 # colunas principais por tela: (chave, rótulo, tipo[, maxlen])
 _PDF_COLS = {
+    "conferencia": [("endereco", "Endereço", "text"), ("tipo", "Tipo", "text"), ("codprod", "Cód", "text"),
+                    ("descricao", "Produto", "text", 38), ("qt", "Qtd (sist.)", "int"),
+                    ("dtval", "Validade", "text"), ("situacao", "Situação", "text")],
     "produtos": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                  ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
                  ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"),

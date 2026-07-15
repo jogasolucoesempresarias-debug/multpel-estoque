@@ -1259,6 +1259,28 @@ def plano_reposicao(p, params, hoje=None, semanas=12):
 TIPO_WMS = {"AP": "Picking", "AE": "Pulmão"}
 
 
+def rua_conferencia(rua, itens_rows, vazias_rows):
+    """Lista de conferência de uma RUA, em ORDEM DE CAMINHADA (prédio → nível → apto).
+    Junta as posições COM estoque e as reservadas VAZIAS (que devem ser conferidas como
+    vazias) — é o que valida o endereçamento na prateleira."""
+    def _pos(r, situacao, qt, dtval):
+        p, n, a = int(_n(r.get("predio"))), int(_n(r.get("nivel"))), int(_n(r.get("apto")))
+        cp = r.get("codprod")
+        return {"_p": p, "_n": n, "_a": a,
+                "endereco": "R%d·P%d·N%d·A%d" % (int(rua), p, n, a),
+                "tipo": TIPO_WMS.get(r.get("tipo"), r.get("tipo") or "—"),
+                "codprod": int(_n(cp)) if cp is not None else None,
+                "qt": qt, "dtval": dtval, "situacao": situacao}
+
+    out = [_pos(r, "com estoque", _round(_n(r.get("qt"))), (str(r.get("dtval")) or "")[:10] if r.get("dtval") else None)
+           for r in (itens_rows or [])]
+    out += [_pos(r, "VAZIA (reservada)", 0, None) for r in (vazias_rows or [])]
+    out.sort(key=lambda x: (x["_p"], x["_n"], x["_a"], -(x["qt"] or 0)))
+    for x in out:
+        x.pop("_p"); x.pop("_n"); x.pop("_a")
+    return out
+
+
 def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None, vazias_rows=None):
     """KPIs de ocupação do depósito + ocupação por RUA e por tipo (picking/pulmão).
     Denominador = posições ativas (PCENDERECO); ocupadas = posições distintas com QT>0.

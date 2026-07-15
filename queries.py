@@ -472,11 +472,33 @@ def q_ocupacao_por_tipo(filiais=None):
     return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""
 
 
-def q_ocupacao_vazias(filiais=None):
+def q_rua_itens(rua, filiais=None):
+    """Posições COM ESTOQUE de uma RUA (conferência): endereço + produto + qtd + validade."""
+    lista = _lista_filiais_dax(filiais)
+    filtros = [f"PCENDERECO[RUA] = {int(rua)}"]
+    if lista:
+        filtros.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    inner = """SELECTCOLUMNS(
+        FILTER(PCESTENDERECO, PCESTENDERECO[QT] > 0),
+        "predio",  LOOKUPVALUE(PCENDERECO[PREDIO],    PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "nivel",   LOOKUPVALUE(PCENDERECO[NIVEL],     PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "apto",    LOOKUPVALUE(PCENDERECO[APTO],      PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "tipo",    LOOKUPVALUE(PCENDERECO[TIPOENDER], PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
+        "codprod", PCESTENDERECO[CODPROD],
+        "qt",      PCESTENDERECO[QT],
+        "dtval",   PCESTENDERECO[DTVAL]
+    )"""
+    return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(filtros)})"""
+
+
+def q_ocupacao_vazias(filiais=None, rua=None):
     """Posições que o WMS marca Ocupada (SITUACAO="O") mas SEM estoque físico
-    (nenhum registro com QT>0) — o 'reservado vazio' — + o produto alocado à vaga."""
+    (nenhum registro com QT>0) — o 'reservado vazio' — + o produto alocado à vaga.
+    `rua` opcional restringe a uma rua (usado na conferência)."""
     lista = _lista_filiais_dax(filiais)
     fbase = ['PCENDERECO[SITUACAO] = "O"', 'PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    if rua is not None:
+        fbase.append(f"PCENDERECO[RUA] = {int(rua)}")
     if lista:
         fbase.append(f"PCENDERECO[CODFILIAL] IN {lista}")
     cond = " && ".join(fbase) + ' && CALCULATE(COUNTROWS(PCESTENDERECO), PCESTENDERECO[QT] > 0) = 0'
