@@ -1407,10 +1407,13 @@ function ruasHtml(ruas){
 function confPanel(conf){
   if(!conf) return '';
   if(conf.erro) return `<div class="panel"><div class="empty">Conferência indisponível: ${esc(conf.erro)}</div></div>`;
-  const its=conf.itens||[], qs=serverQS()+'&rua='+conf.rua+(S.ocCego?'&cego=1':'');
+  const todas=conf.itens||[], its=S.confTipo?todas.filter(x=>x.tipo===S.confTipo):todas;
+  const qs=serverQS()+'&rua='+conf.rua+(S.ocCego?'&cego=1':'')+(S.confTipo?'&tipo='+encodeURIComponent(S.confTipo):'');
+  const nvz=its.filter(x=>(x.situacao||'').startsWith('VAZIA')).length;
   return `<div class="panel" id="oc-conf" style="border-color:${C.accent}">
-    <h3>Conferência — Rua ${int(conf.rua)} <small class="muted">· ${int(conf.n_pos)} posições · ${int(conf.n_itens)} itens · ${int(conf.n_vazias)} devem estar vazias</small></h3>
-    <div style="display:flex;gap:8px;margin:8px 0 4px;flex-wrap:wrap">
+    <h3>Conferência — Rua ${int(conf.rua)} <small class="muted">· ${int(its.length)} posições · ${int(new Set(its.filter(x=>x.codprod).map(x=>x.codprod)).size)} itens · ${int(nvz)} devem estar vazias${S.confTipo?` · só ${esc(S.confTipo)}`:''}</small></h3>
+    <div style="display:flex;gap:8px;margin:8px 0 4px;flex-wrap:wrap;align-items:center">
+      <span class="seg" id="conf-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.confTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span>
       <button class="btn sm" id="oc-cego">${S.ocCego?'✓ Contagem cega':'Contagem cega'}</button>
       <a class="btn sm" href="/api/export/conferencia.xlsx?${qs}">⬇ Excel</a>
       <a class="btn sm" href="/api/export/conferencia.pdf?${qs}">⬇ PDF</a>
@@ -1495,13 +1498,18 @@ async function renderOcupacao(P){
   el.querySelectorAll('.oc-rua-row').forEach(x=>x.onclick=()=>{ const r=+x.dataset.rua, on=(S.ocRua===r); S.ocRua=on?null:r; S._ocScroll=!on; render(); });
   const cx=$('#oc-conf-x'); if(cx) cx.onclick=()=>{ S.ocRua=null; render(); };
   const cg=$('#oc-cego'); if(cg) cg.onclick=()=>{ S.ocCego=!S.ocCego; render(); };
+  // filtros picking/pulmão (listas em que a linha É uma posição)
+  const ct=$('#conf-tipo'); if(ct) ct.querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{ S.confTipo=o.dataset.t||''; render(); });
+  const vt=$('#vaz-tipo'); if(vt) vt.querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{ S.vazTipo=o.dataset.t||''; render(); });
   if(conf && !conf.erro && S._ocScroll){ S._ocScroll=false; const t=$('#oc-conf'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); }
 }
 // tabela full-width das posições ocupadas-mas-vazias (o "reservado") + produto que alocou a vaga
 function vaziasPanel(j){
-  const list=j.vazias||[]; if(!list.length) return '';
+  const todas=j.vazias||[]; if(!todas.length) return '';
+  const list=S.vazTipo?todas.filter(v=>v.tipo===S.vazTipo):todas;
   const dm={}; (S.produtosAll||[]).forEach(p=>{dm[p.codprod]=p.descricao;});
-  return `<div class="panel" id="oc-vazias"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(j.vazias_total)} vagas · o que reservou cada uma</small></h3>
+  return `<div class="panel" id="oc-vazias"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(list.length)} vagas${S.vazTipo?` · só ${esc(S.vazTipo)}`:''} · o que reservou cada uma</small></h3>
+    <div style="margin:6px 0 2px"><span class="seg" id="vaz-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.vazTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span></div>
     <div class="count-line">O WMS marca a posição como ocupada mas não há mercadoria. <b>Endereço fixo</b> → normal (a vaga é do produto, vai repor); senão, dá pra liberar. Clique p/ abrir o produto.</div>
     <div class="tbl-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto que reservou a vaga</th></tr></thead>
     <tbody>${list.map(v=>{const nm=v.descricao||dm[v.codprod]||(v.codprod?('Produto '+v.codprod):'— sem produto');

@@ -818,6 +818,9 @@ def _export_data(view):
         # relatório de conferência de uma rua (ordem de caminhada). cego=1 -> sem a qtd do
         # sistema e com coluna em branco p/ anotar a contagem.
         linhas = [dict(x) for x in _rua_conferencia(int(request.args.get("rua") or 0))]
+        _tp = request.args.get("tipo")           # Picking | Pulmão (filtro da tela)
+        if _tp:
+            linhas = [l for l in linhas if l.get("tipo") == _tp]
         if request.args.get("cego") == "1":
             for l in linhas:
                 l["contado"] = ""
