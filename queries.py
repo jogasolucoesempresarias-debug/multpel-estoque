@@ -281,6 +281,39 @@ FILTER(
 )"""
 
 
+def q_venda_comprador_mensal_rca(data_ini, filiais=None):
+    """Venda BRUTA por CODCOMPRADOR × mês (CALENDARIO[AnoMes]) desde data_ini.
+    Base do % da aba Vencidos. Usa a measure oficial [VENDA BRUTA] (≠ SUM(VLVENDA),
+    diferem ~0,5%) e o relacionamento DTSAIDA→CALENDARIO. Líquida = esta − devolução."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODCOMPRADOR],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
+        "venda", [VENDA BRUTA]
+    ),
+    [venda] <> 0
+)"""
+
+
+def q_devol_comprador_mensal_rca(data_ini, filiais=None):
+    """Devolução por CODCOMPRADOR × mês (CALENDARIO[AnoMes]) desde data_ini (DTENT).
+    Espelha o q_devol_comprador_rca, mas mensal — p/ a venda líquida do % da aba Vencidos."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_DEVOLUCAO[CODCOMPRADOR],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_DEVOLUCAO,
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
+        "dev", [TOTAL DEVOLUCAO]
+    ),
+    [dev] <> 0
+)"""
+
+
 def q_devol_av_rca(data_ini, data_fim, filiais=None):
     """Devolução avulsa (valor+custo) por CODPROD no período (DTENT)."""
     return f"""EVALUATE
@@ -365,6 +398,34 @@ FILTER(
     PCESTENDERECO[DTVAL] >= {_date_dax(data_ini)}
     && PCESTENDERECO[DTVAL] <= {_date_dax(data_fim)}
     && [qt] > 0
+)"""
+
+
+def q_prox_venc(codprods, hoje, filiais=None):
+    """Próximo vencimento (menor DTVAL futuro) do estoque endereçado, por CODPROD, p/ uma
+    lista de códigos. Usado na aba Vencidos: no painel "já venceu e ainda está em estoque",
+    mostra QUANDO o estoque atual vence — transforma "já perdi" em "aja antes de perder de novo".
+    Só lotes com qt>0, RUA<>99, DTVAL>=hoje (o que já venceu no endereço é outro problema)."""
+    if not codprods:
+        return None
+    lista = _lista_filiais_dax(filiais)
+    filtros = ["PCENDERECO[RUA] <> 99"]
+    if lista:
+        filtros.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    cods = "{" + ",".join(str(int(c)) for c in codprods) + "}"
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(PCESTENDERECO, PCESTENDERECO[CODPROD], PCESTENDERECO[DTVAL]),
+        "qt", CALCULATE(SUM(PCESTENDERECO[QT]))
+    )"""
+    return f"""EVALUATE
+GROUPBY(
+    FILTER(
+        CALCULATETABLE({inner}, {", ".join(filtros)}),
+        PCESTENDERECO[CODPROD] IN {cods} && [qt] > 0
+        && PCESTENDERECO[DTVAL] >= {_date_dax(hoje)}
+    ),
+    PCESTENDERECO[CODPROD],
+    "prox_venc", MINX(CURRENTGROUP(), PCESTENDERECO[DTVAL])
 )"""
 
 

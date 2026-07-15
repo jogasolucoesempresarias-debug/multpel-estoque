@@ -550,18 +550,28 @@ async function renderVencidos(){
   let itens=(J.itens||[]).filter(keep);
   if(S.venMes) itens=itens.filter(i=>i.mes===S.venMes);
 
+  // venda/pct vêm do servidor (J.meses) — só existem SEM filtro de comprador (a venda é
+  // total da empresa, não por comprador-mês). Com comprador filtrado, a linha % some.
+  const semFiltroComp=!fc;
+  const jm={}; (J.meses||[]).forEach(m=>{jm[m.mes]={venda:m.venda,pct:m.pct};});
   // meses recalculados a partir das linhas visíveis → respeitam o filtro de comprador
   const mm={}; (J.itens||[]).filter(keep).forEach(i=>{ if(!i.mes)return;
     const g=mm[i.mes]=mm[i.mes]||{mes:i.mes,itens:0,qt:0,valor:0}; g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
-  const meses=Object.values(mm).sort((a,b)=>a.mes<b.mes?1:-1);
+  const meses=Object.values(mm).map(g=>({...g,
+    pct:semFiltroComp?(jm[g.mes]?.pct??null):null})).sort((a,b)=>a.mes<b.mes?1:-1);
   const tot=(k)=>itens.reduce((s,i)=>s+(i[k]||0),0);
   const emEst=(J.em_estoque||[]).filter(p=>(!fc||String(p.codcomprador)===fc)&&(!ff||String(p.codfornec)===ff));
   const pior=meses.length?meses.reduce((a,b)=>b.valor>a.valor?b:a):null;
   const mesLbl=m=>{const[a,b]=m.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+b-1]+'/'+a.slice(2);};
+  // % global (perda ÷ venda líquida). Com comprador filtrado, usa o pct do ranking daquele comprador.
+  const R=J.resumo||{};
+  const pctGlobal=fc ? (J.por_comprador||[]).find(g=>String(g.cod)===fc)?.pct : R.pct_total;
 
   el.innerHTML=head('Vencidos — perda por validade','vencidos')
     +`<div class="kpi-grid">
         ${kpi('Valor perdido',money(tot('total')),`${int(itens.length)} itens · ${int(tot('qt'))} un`,C.red)}
+        ${kpi('% da venda',pctGlobal!=null?pctGlobal.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—',
+              'perda ÷ venda líquida',C.accent)}
         ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),`em ${int(meses.length)} meses`,C.orange)}
         ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
         ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos`,C.purple)}
@@ -594,38 +604,48 @@ async function renderVencidos(){
   // ── MELHORIA: já venceu e AINDA está em estoque = risco de vencer de novo ──
   const ecols=[{k:'codprod',label:'Cód',num:1},{k:'descricao',label:'Produto'},{k:'fornecedor',label:'Fornecedor'},
     {k:'vezes',label:'Vezes',num:1},{k:'qt',label:'Qt perdida',num:1},{k:'valor',label:'Já perdido',num:1},
-    {k:'qtdisp',label:'Em estoque',num:1},{k:'ultima',label:'Última perda',num:1}];
+    {k:'qtdisp',label:'Em estoque',num:1},{k:'prox_venc',label:'Próx. venc.',num:1},{k:'ultima',label:'Última perda',num:1}];
   const esk=S.sort['vencidos_est']||{key:'valor',dir:-1};
+  // célula do próximo vencimento: data + dias, colorida por urgência (≤30d vermelho, ≤60d laranja)
+  const proxCell=p=>{ if(!p.prox_venc) return '<td class="num muted">—</td>';
+    const d=Math.round((new Date(p.prox_venc+'T00:00:00')-new Date(new Date().toDateString()))/864e5);
+    const c=d<=30?C.red:(d<=60?C.orange:'');
+    return `<td class="num" style="${c?`color:${c};font-weight:600`:''}">${dt(p.prox_venc)} <small class="muted">${d}d</small></td>`;};
   $('#ven-estoque').innerHTML=`<h3>⚠️ Já venceu e ainda está em estoque
       <small class="muted">· risco de vencer de novo · ${S.venMes
         ? `<b>histórico completo — não filtra por ${mesLbl(S.venMes)}</b>`
         : 'considera todo o histórico, independe do mês'}</small></h3>`
-    +(emEst.length?`<div class="count-line">${int(emEst.length)} produtos · ${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos</div>
+    +(emEst.length?`<div class="count-line">${int(emEst.length)} produtos · ${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos · <b style="color:${C.red}">próx. venc.</b> = quando o estoque atual vence</div>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(ecols,esk)}</tr></thead><tbody>${
         _sortArr(emEst,esk).slice(0,100).map(p=>`<tr data-cod="${p.codprod}" style="cursor:pointer">
           <td class="num">${p.codprod}</td><td><span class="prod" title="${esc(p.descricao)}">${esc(p.descricao)}</span></td>
           <td><span class="prod" title="${esc(p.fornecedor)}">${esc(p.fornecedor)}</span></td>
           <td class="num">${int(p.vezes)}</td><td class="num">${int(p.qt)}</td><td class="num">${money(p.valor)}</td>
-          <td class="num">${int(p.qtdisp)}</td><td class="num">${dt((p.ultima||'').slice(0,10))}</td></tr>`).join('')
+          <td class="num">${int(p.qtdisp)}</td>${proxCell(p)}<td class="num">${dt((p.ultima||'').slice(0,10))}</td></tr>`).join('')
       }</tbody></table></div>`
     :`<div class="empty">Nenhum item vencido continua em estoque. 👏</div>`);
   wireSortTbl($('#ven-estoque'),'vencidos_est',render);
   $('#ven-estoque').querySelectorAll('tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
 
   // ── rankings ──
+  // pctMap (só comprador): cod → % da perda sobre a venda líquida (do servidor, all-time).
+  // Como é all-time, só mostra sem filtro de mês; com mês selecionado a coluna vira "—".
+  const pctComp={}; (J.por_comprador||[]).forEach(g=>{if(g.cod!=null)pctComp[String(g.cod)]=g.pct;});
   // attr: 'data-comp' (comprador) ou 'data-forn' (fornecedor) — ambos clicáveis p/ filtrar
-  const rank=(arr,titulo,attr,selCod)=>{const t=arr.reduce((s,g)=>s+(g.valor||0),0);
+  const rank=(arr,titulo,attr,selCod,pctMap)=>{const t=arr.reduce((s,g)=>s+(g.valor||0),0);
+    const pcol=!!pctMap, semMes=!S.venMes&&!ff;   // % venda é all-time do comprador: some com filtro de mês/fornecedor
     return `<h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
       <div class="tbl-wrap" style="max-height:280px;overflow:auto"><table>
-      <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">%</th><th class="num">Itens</th></tr></thead>
+      <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">Part.</th>${pcol?'<th class="num">% venda</th>':''}<th class="num">Itens</th></tr></thead>
       <tbody>${arr.slice(0,15).map(g=>{const sel=g.cod!=null&&String(g.cod)===selCod;
+        const pv=pcol&&semMes?pctMap[String(g.cod)]:null;
         return `<tr ${attr}="${g.cod!=null?g.cod:''}" style="${g.cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}">
         <td><span class="prod" title="${esc(g.nome)}">${esc(g.nome)}</span></td><td class="num">${money(g.valor)}</td>
-        <td class="num">${t?pct(g.valor/t):'—'}</td><td class="num">${int(g.itens)}</td></tr>`;}).join('')
-        ||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table></div>`;};
+        <td class="num">${t?pct(g.valor/t):'—'}</td>${pcol?`<td class="num">${pv!=null?pv.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—'}</td>`:''}<td class="num">${int(g.itens)}</td></tr>`;}).join('')
+        ||`<tr><td colspan="${pcol?5:4}" class="muted">—</td></tr>`}</tbody></table></div>`;};
   const rk=(cod_key,nome_key,base)=>{const g={}; base.forEach(i=>{const d=g[i[nome_key]]=g[i[nome_key]]||{nome:i[nome_key],cod:i[cod_key],itens:0,valor:0};
     d.itens++; d.valor+=i.total||0;}); return Object.values(g).sort((a,b)=>b.valor-a.valor);};
-  $('#ven-comp').innerHTML=rank(rk('codcomprador','comprador',itens),'Perda por comprador','data-comp',S.cli.comprador);
+  $('#ven-comp').innerHTML=rank(rk('codcomprador','comprador',itens),'Perda por comprador','data-comp',S.cli.comprador,pctComp);
   $('#ven-forn').innerHTML=rank(rk('codfornec','fornecedor',itens),'Perda por fornecedor','data-forn',S.cli.fornec);
   wirePorComprador($('#ven-comp'));
   // clique no fornecedor = mesmo efeito de digitar no filtro do topo (mantém a UI em sincronia)
@@ -657,13 +677,25 @@ async function renderVencidos(){
   const vc=$('#ven-clear'); if(vc) vc.onclick=e=>{e.preventDefault();S.venMes=null;render();};
 
   // ── gráfico: últimos 18 meses, mês selecionado destacado ──
-  const g18=[...meses].sort((a,b)=>a.mes<b.mes?-1:1).slice(-18);
-  chart('ch-ven',{type:'bar',data:{labels:g18.map(m=>mesLbl(m.mes)),datasets:[{data:g18.map(m=>m.valor),
-      backgroundColor:g18.map(m=>(!S.venMes||S.venMes===m.mes)?C.red:'rgba(100,116,139,.28)'),borderRadius:6}]},
+  // TODOS os meses com perda (não só 18) — senão o card "N meses / R$ total" não bate com o
+  // gráfico e parece contradição (o diretor reparou). Cap em 48m só p/ não explodir no futuro.
+  const g18=[...meses].sort((a,b)=>a.mes<b.mes?-1:1).slice(-48);
+  // combo: barras = R$ perdido (eixo esq) · linha = % da venda (eixo dir próprio, senão some no zero)
+  const temPct=g18.some(m=>m.pct!=null);
+  const dsBar={type:'bar',label:'Perdido',yAxisID:'y',data:g18.map(m=>m.valor),
+    backgroundColor:g18.map(m=>(!S.venMes||S.venMes===m.mes)?C.red:'rgba(100,116,139,.28)'),borderRadius:6};
+  const dsLine={type:'line',label:'% da venda',yAxisID:'y1',data:g18.map(m=>m.pct),
+    borderColor:C.accent,backgroundColor:C.accent,borderWidth:2,pointRadius:2,tension:.35,spanGaps:true};
+  chart('ch-ven',{data:{labels:g18.map(m=>mesLbl(m.mes)),datasets:temPct?[dsBar,dsLine]:[dsBar]},
     options:{maintainAspectRatio:false,   // sem isso o Chart.js trava em 2:1 e sobra vão à direita
       onClick:(ev,els)=>{if(!els||!els.length)return;const m=g18[els[0].index].mes;S.venMes=(S.venMes===m)?null:m;render();},
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+g18[c.dataIndex].itens+' itens'}}},
-      scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
+      plugins:{legend:{display:temPct,labels:{boxWidth:12,font:{size:10}}},
+        tooltip:{callbacks:{label:c=>c.dataset.yAxisID==='y1'
+          ?'% da venda: '+(c.raw!=null?c.raw.toLocaleString('pt-BR',{maximumFractionDigits:3})+'%':'—')
+          :money(c.raw)+' · '+g18[c.dataIndex].itens+' itens'}}},
+      scales:{y:{ticks:{callback:v=>moneyK(v)}},
+        y1:{display:temPct,position:'right',grid:{drawOnChartArea:false},
+          ticks:{callback:v=>v.toLocaleString('pt-BR',{maximumFractionDigits:2})+'%'}}}}});
 }
 
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)

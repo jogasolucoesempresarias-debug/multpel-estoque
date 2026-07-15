@@ -1114,15 +1114,22 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
 
 
 # ───────────────────────── validade / FEFO ─────────────────────────
-def vencidos_por_mes(rows, produtos_idx=None):
+def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map=None):
     """Perda por VALIDADE (conta 200042) por mês — espelha a planilha VENCIDOS do diretor.
 
     rows: saída de q_vencidos (grão = item da nota, já escopado na conta 200042).
     produtos_idx: {codprod: produto} do snapshot atual. Serve p/ marcar o item que já
     venceu e **ainda está na casa** (qtdisp > 0) = risco de vencer de novo — é o
     contraponto do validade_fefo (que olha risco futuro; aqui é perda realizada).
+    venda_mes_map/venda_comp_map: venda líquida por mês ('YYYY-MM') e por comprador (cc),
+    p/ o % da perda sobre a venda. Só há venda ≥2024 → meses antigos saem com pct=None.
     """
     idx = produtos_idx or {}
+    vmes = venda_mes_map or {}
+    vcomp = venda_comp_map or {}
+
+    def _pct(perda, venda):
+        return _round(perda / venda * 100, 3) if venda else None
     itens = []
     for r in rows:
         dt = _parse_dt(r.get("dtsaida"))
@@ -1163,22 +1170,37 @@ def vencidos_por_mes(rows, produtos_idx=None):
         g["produtos"].add(i["codprod"])
     meses = []
     for g in mm.values():
+        venda = vmes.get(g["mes"])
         meses.append({"mes": g["mes"], "itens": g["itens"], "qt": _round(g["qt"]),
-                      "valor": _round(g["valor"]), "produtos": len(g["produtos"])})
+                      "valor": _round(g["valor"]), "produtos": len(g["produtos"]),
+                      "venda": _round(venda) if venda is not None else None,
+                      "pct": _pct(g["valor"], venda)})
     meses.sort(key=lambda x: x["mes"], reverse=True)
 
     # rankings (comprador / fornecedor)
-    def _rank(cod_key, nome_key):
+    def _rank(cod_key, nome_key, venda_map=None):
+        # venda_map (só p/ comprador): venda líq → % da perda sobre a venda. O numerador
+        # do % conta só a perda dos meses COM venda (≥2024), p/ casar com o denominador.
         g = {}
         for i in itens:
             d = g.setdefault(i[nome_key], {"nome": i[nome_key], "cod": i.get(cod_key),
-                                           "itens": 0, "qt": 0.0, "valor": 0.0})
+                                           "itens": 0, "qt": 0.0, "valor": 0.0, "valor_com_venda": 0.0})
             d["itens"] += 1
             d["qt"] += i["qt"]
             d["valor"] += i["total"]
+            if i.get("mes") in vmes:
+                d["valor_com_venda"] += i["total"]
+        out = []
         for d in g.values():
             d["qt"], d["valor"] = _round(d["qt"]), _round(d["valor"])
-        return sorted(g.values(), key=lambda x: -x["valor"])
+            if venda_map is not None:
+                venda = venda_map.get(d["cod"])
+                d["venda"] = _round(venda) if venda is not None else None
+                d["pct"] = _pct(d.pop("valor_com_venda"), venda)
+            else:
+                d.pop("valor_com_venda", None)
+            out.append(d)
+        return sorted(out, key=lambda x: -x["valor"])
 
     # por produto — base do painel "ainda em estoque"
     pp = {}
@@ -1200,6 +1222,9 @@ def vencidos_por_mes(rows, produtos_idx=None):
     em_estoque = [p for p in produtos if p["em_estoque"]]
 
     pior = max(meses, key=lambda m: m["valor"]) if meses else None
+    # % global: perda dos meses COM venda ÷ venda líquida total (mesmo período)
+    perda_com_venda = sum(i["total"] for i in itens if i.get("mes") in vmes)
+    venda_total = sum(vmes.values())
     return {
         "resumo": {
             "itens": len(itens),
@@ -1211,12 +1236,14 @@ def vencidos_por_mes(rows, produtos_idx=None):
             "mes_pior_valor": pior["valor"] if pior else 0,
             "em_estoque_n": len(em_estoque),
             "em_estoque_valor": _round(sum(p["valor"] for p in em_estoque)),
+            "venda_total": _round(venda_total) if venda_total else None,
+            "pct_total": _pct(perda_com_venda, venda_total),
         },
         "meses": meses,
         "itens": itens,
         "produtos": produtos,
         "em_estoque": em_estoque,
-        "por_comprador": _rank("codcomprador", "comprador"),
+        "por_comprador": _rank("codcomprador", "comprador", venda_map=vcomp),
         "por_fornecedor": _rank("codfornec", "fornecedor"),
     }
 

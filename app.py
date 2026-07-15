@@ -536,14 +536,51 @@ def api_validade():
     return jsonify({"ok": True, "horizonte": dias, "resumo": resumo, "lotes": fefo})
 
 
+def _venda_liq_mensal(filiais_venda):
+    """Venda LÍQUIDA (bruta − devolução) por comprador × mês, p/ o % da aba Vencidos.
+    Devolve (por_mes {AnoMes 'YYYY-MM': liq}, por_comprador {cc: liq}). Mesma fórmula da
+    aba Desempenho (líq = [VENDA BRUTA] − [TOTAL DEVOLUCAO]). Venda começa em 2024 no RCA;
+    meses anteriores ficam sem % (numerador sem denominador)."""
+    ini = date(2024, 1, 1)
+
+    def _am(v):
+        s = str(int(v))
+        return f"{s[:4]}-{s[4:]}"
+
+    vendas = pbi.run_dax_rca(Q.q_venda_comprador_mensal_rca(ini, filiais_venda))
+    devol = pbi.run_dax_rca(Q.q_devol_comprador_mensal_rca(ini, filiais_venda))
+    dev_idx = {(int(core._n(r["CODCOMPRADOR"])), _am(r["AnoMes"])): core._n(r.get("dev")) for r in devol}
+    por_mes, por_comp = {}, {}
+    for r in vendas:
+        cc = int(core._n(r["CODCOMPRADOR"]))
+        mes = _am(r["AnoMes"])
+        liq = core._n(r.get("venda")) - dev_idx.get((cc, mes), 0.0)
+        por_mes[mes] = por_mes.get(mes, 0.0) + liq
+        por_comp[cc] = por_comp.get(cc, 0.0) + liq
+    return por_mes, por_comp
+
+
 @app.route("/api/vencidos")
 def api_vencidos():
-    """Perda por validade (conta 200042) por mês — replica a planilha VENCIDOS do diretor
-    e cruza com o estoque atual (item que já venceu e ainda está na casa)."""
+    """Perda por validade (conta 200042) por mês — replica a planilha VENCIDOS do diretor,
+    cruza com o estoque atual (item que já venceu e ainda está na casa) e traz o % da perda
+    sobre a venda líquida (por mês e por comprador)."""
     produtos, params, filiais = _build_produtos()
     idx = {p["codprod"]: p for p in produtos}
     rows = pbi.run_dax(Q.q_vencidos(filiais))
-    return jsonify({"ok": True, **core.vencidos_por_mes(rows, idx)})
+    venda_mes, venda_comp = _venda_liq_mensal(_filiais_venda())
+    res = core.vencidos_por_mes(rows, idx, venda_mes_map=venda_mes, venda_comp_map=venda_comp)
+    # próximo vencimento do estoque ATUAL dos itens que já venceram e continuam na casa —
+    # "já perdi isso; e o que tenho vence quando?". Só p/ os em_estoque (lista curta).
+    em = res.get("em_estoque") or []
+    cods = [p["codprod"] for p in em if p.get("codprod") is not None]
+    if cods:
+        pv = pbi.run_dax(Q.q_prox_venc(cods, _hoje(), filiais))
+        pvmap = {int(core._n(r["CODPROD"])): r.get("prox_venc") for r in pv}
+        for p in em:  # mesmas refs de res['produtos'] → atualiza os dois
+            dtv = pvmap.get(p["codprod"])
+            p["prox_venc"] = (str(dtv)[:10] if dtv else None)
+    return jsonify({"ok": True, **res})
 
 
 @app.route("/api/resumos")
