@@ -849,6 +849,12 @@ def _export_data(view):
         vm = request.args.get("ven_mes")
         if vm:
             linhas = [l for l in linhas if l.get("mes") == vm]
+        vp = request.args.get("ven_per")  # 2026 | 12m (tudo = sem filtro)
+        if vp == "2026":
+            linhas = [l for l in linhas if (l.get("mes") or "").startswith("2026")]
+        elif vp == "12m":
+            meses_ok = sorted({l.get("mes") for l in linhas if l.get("mes")})[-12:]
+            linhas = [l for l in linhas if l.get("mes") in meses_ok]
         cols = ["dtsaida", "mes", "numnota", "codfornec", "fornecedor", "codprod", "descricao",
                 "qt", "punit", "total", "comprador", "codfilial", "qtdisp"]
     elif view == "conferencia":

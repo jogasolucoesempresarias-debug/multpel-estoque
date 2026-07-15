@@ -18,7 +18,7 @@ const S = {
   cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
-  vencidos:null, vencidosQS:'', venMes:null,   // aba Vencidos (perda de validade) — cache por QS + mês selecionado
+  vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
 };
 
 /* ───────── helpers ───────── */
@@ -194,7 +194,7 @@ function exportQS(){
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
   if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
-  if(S.venMes && S.view==='vencidos') p.set('ven_mes',S.venMes);
+  if(S.view==='vencidos'){ if(S.venMes) p.set('ven_mes',S.venMes); if(S.venPer&&S.venPer!=='tudo') p.set('ven_per',S.venPer); }
   if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
   if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
@@ -546,7 +546,16 @@ async function renderVencidos(){
   const J=S.vencidos;
   // filtros do topo (mesma semântica das outras abas): comprador + fornecedor
   const fc=S.cli.comprador, ff=S.cli.fornec;
-  const keep=r=>(!fc||String(r.codcomprador)===fc) && (!ff||String(r.codfornec)===ff);
+  // período (2026 | 12m | tudo) — o "já venceu e ainda está em estoque" NÃO usa isto
+  // (é risco atual, precisa do histórico completo p/ a reincidência).
+  const per=S.venPer||'2026';
+  const allMonths=[...new Set((J.itens||[]).map(i=>i.mes).filter(Boolean))].sort();
+  const perMonths = per==='tudo' ? null
+    : per==='2026' ? new Set(allMonths.filter(m=>m.startsWith('2026')))
+    : new Set(allMonths.slice(-12));
+  const perOK=m=>!perMonths||perMonths.has(m);
+  const perTudo=per==='tudo';
+  const keep=r=>(!fc||String(r.codcomprador)===fc) && (!ff||String(r.codfornec)===ff) && perOK(r.mes);
   let itens=(J.itens||[]).filter(keep);
   if(S.venMes) itens=itens.filter(i=>i.mes===S.venMes);
 
@@ -558,23 +567,31 @@ async function renderVencidos(){
   const mm={}; (J.itens||[]).filter(keep).forEach(i=>{ if(!i.mes)return;
     const g=mm[i.mes]=mm[i.mes]||{mes:i.mes,itens:0,qt:0,valor:0}; g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
   const meses=Object.values(mm).map(g=>({...g,
+    venda:semFiltroComp?(jm[g.mes]?.venda??null):null,
     pct:semFiltroComp?(jm[g.mes]?.pct??null):null})).sort((a,b)=>a.mes<b.mes?1:-1);
   const tot=(k)=>itens.reduce((s,i)=>s+(i[k]||0),0);
   const emEst=(J.em_estoque||[]).filter(p=>(!fc||String(p.codcomprador)===fc)&&(!ff||String(p.codfornec)===ff));
   const pior=meses.length?meses.reduce((a,b)=>b.valor>a.valor?b:a):null;
   const mesLbl=m=>{const[a,b]=m.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+b-1]+'/'+a.slice(2);};
-  // % global (perda ÷ venda líquida). Com comprador filtrado, usa o pct do ranking daquele comprador.
-  const R=J.resumo||{};
-  const pctGlobal=fc ? (J.por_comprador||[]).find(g=>String(g.cod)===fc)?.pct : R.pct_total;
+  // % global do PERÍODO: perda ÷ venda líquida dos meses visíveis que têm venda (RCA ≥2024).
+  // Com comprador filtrado, cai pro pct all-time daquele comprador (não há venda por comp-mês).
+  const mesesCV=meses.filter(m=>m.venda!=null);
+  const perdaCV=mesesCV.reduce((s,m)=>s+m.valor,0), vendaCV=mesesCV.reduce((s,m)=>s+m.venda,0);
+  const pctGlobal=fc ? (J.por_comprador||[]).find(g=>String(g.cod)===fc)?.pct
+                     : (vendaCV?perdaCV/vendaCV*100:null);
+  const perLbl={'2026':'2026','12m':'12 meses','tudo':'Tudo'};
 
   el.innerHTML=head('Vencidos — perda por validade','vencidos')
-    +`<div class="kpi-grid">
+    +`<div class="row" style="margin:2px 0 12px"><div class="fb-group"><label>Período</label>
+        <div class="seg" id="ven-per">${['2026','12m','tudo'].map(p=>
+          `<span class="seg-opt ${per===p?'on':''}" data-per="${p}">${perLbl[p]}</span>`).join('')}</div></div></div>
+      <div class="kpi-grid">
         ${kpi('Valor perdido',money(tot('total')),`${int(itens.length)} itens · ${int(tot('qt'))} un`,C.red)}
         ${kpi('% da venda',pctGlobal!=null?pctGlobal.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—',
               'perda ÷ venda líquida',C.accent)}
         ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),`em ${int(meses.length)} meses`,C.orange)}
         ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
-        ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos`,C.purple)}
+        ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos · histórico`,C.purple)}
       </div>
       <div class="panel"><h3>Por mês <small class="muted">· clique num mês p/ filtrar o detalhe</small></h3>
         <div class="row" style="align-items:flex-start">
@@ -600,6 +617,9 @@ async function renderVencidos(){
       ||'<tr><td colspan="3" class="muted">—</td></tr>'}</tbody></table></div>`;
   el.querySelectorAll('tr[data-mes]').forEach(tr=>tr.onclick=()=>{
     S.venMes=(S.venMes===tr.dataset.mes)?null:tr.dataset.mes; render(); });
+  // seletor de período (2026 | 12m | tudo) — troca some o mês selecionado p/ não ficar preso
+  el.querySelectorAll('#ven-per .seg-opt').forEach(o=>o.onclick=()=>{
+    S.venPer=o.dataset.per; S.venMes=null; render(); });
 
   // ── MELHORIA: já venceu e AINDA está em estoque = risco de vencer de novo ──
   const ecols=[{k:'codprod',label:'Cód',num:1},{k:'descricao',label:'Produto'},{k:'fornecedor',label:'Fornecedor'},
@@ -633,7 +653,7 @@ async function renderVencidos(){
   const pctComp={}; (J.por_comprador||[]).forEach(g=>{if(g.cod!=null)pctComp[String(g.cod)]=g.pct;});
   // attr: 'data-comp' (comprador) ou 'data-forn' (fornecedor) — ambos clicáveis p/ filtrar
   const rank=(arr,titulo,attr,selCod,pctMap)=>{const t=arr.reduce((s,g)=>s+(g.valor||0),0);
-    const pcol=!!pctMap, semMes=!S.venMes&&!ff;   // % venda é all-time do comprador: some com filtro de mês/fornecedor
+    const pcol=!!pctMap, semMes=!S.venMes&&!ff&&perTudo;   // % venda é all-time do comprador: só em "Tudo", sem filtro de mês/fornecedor
     return `<h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
       <div class="tbl-wrap" style="max-height:280px;overflow:auto"><table>
       <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">Part.</th>${pcol?'<th class="num">% venda</th>':''}<th class="num">Itens</th></tr></thead>
