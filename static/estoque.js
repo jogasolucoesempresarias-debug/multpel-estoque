@@ -1294,6 +1294,7 @@ async function renderOcupacao(P){
   if(S.ocMorto) rows=rows.filter(p=>p.espaco_morto);   // filtro na tela via card
   rows=rows.sort((a,b)=>(b.pos_end||0)-(a.pos_end||0));
   const cols=[colCod,colProd,colForn,
+    {key:'curva_abc',label:'ABC',badge:true},{key:'xyz',label:'XYZ',badge:true},
     {key:'pos_end',label:'Posições',num:true,fmt:int},
     {key:'pos_end',label:'% ocup.',num:true,fmt:v=>dec(v/ocup*100,1)+'%'},
     {key:'m3_end',label:'m³ end.',num:true,fmt:v=>v?dec(v,2):'—'},
