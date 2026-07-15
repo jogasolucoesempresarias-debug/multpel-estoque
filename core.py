@@ -1265,7 +1265,8 @@ def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None):
     media_pos = pares (produto×posição) / produtos endereçados."""
     k = kpi_rows[0] if kpi_rows else {}
     pos = int(_n(k.get("posicoes")))
-    occ = int(_n(k.get("ocupadas")))
+    occ = int(_n(k.get("ocupadas")))          # OFICIAL: WMS SITUACAO="O"
+    ce = int(_n(k.get("com_estoque")))        # secundário: com estoque físico (QT>0)
     prod = int(_n(k.get("produtos")))
     pares = int(_n(k.get("pares")))
     livres = max(0, pos - occ)
@@ -1296,8 +1297,10 @@ def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None):
     tipos.sort(key=lambda x: x["posicoes"], reverse=True)
     return {
         "posicoes": pos, "ocupadas": occ, "livres": livres, "produtos": prod,
+        "com_estoque": ce,
         "pct_ocupado": _round(occ / pos, 4) if pos else 0,
         "pct_livre": _round(livres / pos, 4) if pos else 0,
+        "pct_com_estoque": _round(ce / pos, 4) if pos else 0,
         "media_pos": _round(pares / prod, 2) if prod else 0,
         "ruas": ruas, "tipos": tipos,
     }

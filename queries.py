@@ -401,22 +401,27 @@ def q_produto_enderecos(codprod, filiais=None):
         "nivel",  LOOKUPVALUE(PCENDERECO[NIVEL],     PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
         "apto",   LOOKUPVALUE(PCENDERECO[APTO],      PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
         "tipo",   LOOKUPVALUE(PCENDERECO[TIPOENDER], PCENDERECO[CODENDERECO], PCESTENDERECO[CODENDERECO]),
-        "q",      PCESTENDERECO[QT]
+        "q",      PCESTENDERECO[QT],
+        "dtval",  PCESTENDERECO[DTVAL],
+        "numlote", PCESTENDERECO[NUMLOTE]
     )"""
     return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(filtros)})"""
 
 
 def q_ocupacao_kpis(filiais=None):
-    """KPIs de ocupação: posições ativas (denominador), ocupadas (QT>0) e produtos endereçados."""
+    """KPIs de ocupação. OFICIAL = posições marcadas ocupadas pelo WMS (SITUACAO="O");
+    'com_estoque' = as que têm estoque físico agora (QT>0) — leitura secundária."""
     lista = _lista_filiais_dax(filiais)
     fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
     focc = ['PCENDERECO[RUA] <> 99', 'PCESTENDERECO[QT] > 0']
     if lista:
         fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
         focc.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+    focc_situ = fpos + ['PCENDERECO[SITUACAO] = "O"']
     return f"""EVALUATE ROW(
     "posicoes", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(fpos)}),
-    "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), {", ".join(focc)}),
+    "ocupadas", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(focc_situ)}),
+    "com_estoque", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), {", ".join(focc)}),
     "produtos", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODPROD]), {", ".join(focc)}),
     "pares", CALCULATE(COUNTROWS(SUMMARIZE(PCESTENDERECO, PCESTENDERECO[CODPROD], PCESTENDERECO[CODENDERECO])), {", ".join(focc)})
 )"""
@@ -448,13 +453,13 @@ def q_ocupacao_por_rua(filiais=None):
     inner = """ADDCOLUMNS(
         SUMMARIZE(PCENDERECO, PCENDERECO[RUA]),
         "posicoes", CALCULATE(COUNTROWS(PCENDERECO)),
-        "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), PCESTENDERECO[QT] > 0)
+        "ocupadas", CALCULATE(COUNTROWS(PCENDERECO), PCENDERECO[SITUACAO] = "O")
     )"""
     return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""
 
 
 def q_ocupacao_por_tipo(filiais=None):
-    """Por TIPOENDER (AP=picking / AE=pulmão): posições ativas e ocupadas."""
+    """Por TIPOENDER (AP=picking / AE=pulmão): posições ativas e ocupadas (WMS SITUACAO="O")."""
     lista = _lista_filiais_dax(filiais)
     fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
     if lista:
@@ -462,6 +467,6 @@ def q_ocupacao_por_tipo(filiais=None):
     inner = """ADDCOLUMNS(
         SUMMARIZE(PCENDERECO, PCENDERECO[TIPOENDER]),
         "posicoes", CALCULATE(COUNTROWS(PCENDERECO)),
-        "ocupadas", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), PCESTENDERECO[QT] > 0)
+        "ocupadas", CALCULATE(COUNTROWS(PCENDERECO), PCENDERECO[SITUACAO] = "O")
     )"""
     return f"""EVALUATE CALCULATETABLE({inner}, {", ".join(fpos)})"""

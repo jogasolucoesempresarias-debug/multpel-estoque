@@ -1182,6 +1182,7 @@ async function openProduto(cod){
     const j=await getJSON('/api/produto/'+cod+'?'+serverQS());
     if(!j.produto){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Produto sem posição.</div>'; wireDrawer(); return; }
     const p=j.produto,lotes=j.lotes||[];
+    const endVal=endsByValidade(j.enderecos);   // posições por data de validade
     const cobPct=p.cobertura!=null?Math.min(100,p.cobertura/(S.params.cob*2)*100):0;
     dr.innerHTML=`<span class="d-close">×</span>
       <h2>${esc(p.descricao)}</h2>
@@ -1214,7 +1215,11 @@ async function openProduto(cod){
       ${planoDrawer(p.plano)}
       ${enderecosDrawer(j.enderecos)}
       <div class="d-sec">Lotes / validade</div>
-      ${lotes.length?lotes.map(l=>`<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>`).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
+      ${lotes.length?lotes.map(l=>{
+        const d=l.dtval?String(l.dtval).slice(0,10):null, pos=(d&&endVal[d])||[];
+        const sub=pos.length?`<div class="count-line" style="margin:1px 2px 9px">${pos.length} pos: ${pos.slice(0,6).join(' · ')}${pos.length>6?` <span class="muted">(+${pos.length-6})</span>`:''}</div>`:'';
+        return `<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>${sub}`;
+      }).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
       ${(p.sugestao_compra||0)>0?`<div class="m-acts"><button class="btn primary" id="d-pedido">Registrar pedido</button></div>`:''}`;
     wireDrawer(); if($('#d-pedido'))$('#d-pedido').onclick=()=>{closeDrawer();modalPedido(p);};
     buildPlanoChart(p.plano);
@@ -1241,6 +1246,13 @@ function enderecosDrawer(ends){
       + arr.map(e=>`<div class="lote-row"><span class="mono">${fmt(e)}</span><span class="lr-r">${int(e.q)} un</span></div>`).join('');
   });
   return html;
+}
+// agrupa as posições WMS por data de validade (p/ listar embaixo de cada lote no drawer)
+function endsByValidade(ends){
+  const m={};
+  (ends||[]).forEach(e=>{ if(e.dtval==null) return; const d=String(e.dtval).slice(0,10);
+    (m[d]=m[d]||[]).push(`R${int(e.rua)}·P${int(e.predio)}·N${int(e.nivel)}·A${int(e.apto)}`); });
+  return m;
 }
 // barras de ocupação por RUA (verde tem espaço · vermelho lotada)
 function ruasHtml(ruas){
@@ -1272,7 +1284,7 @@ async function renderOcupacao(P){
   el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')+`<div class="loader"><div class="spinner"></div>Calculando ocupação…</div>`;
   let j; try{ j=await getJSON('/api/ocupacao?'+serverQS()); }
   catch(e){ el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')+`<div class="empty">Ocupação indisponível: ${esc(e.message)}</div>`; return; }
-  const ocup=j.ocupadas||1;
+  const ocup=j.com_estoque||1;   // % por item = sobre as posições COM ESTOQUE (pos_end é QT>0)
   const rows=P.filter(p=>(p.pos_end||0)>0).sort((a,b)=>(b.pos_end||0)-(a.pos_end||0));
   const mortos=P.filter(p=>p.espaco_morto);
   const cols=[colCod,colProd,colForn,
@@ -1283,7 +1295,7 @@ async function renderOcupacao(P){
     {key:'espaco_morto',label:'',html:p=>p.espaco_morto?`<span class="badge" style="background:${C.orange}22;color:${C.orange}">espaço morto</span>`:''}];
   el.innerHTML=head('Ocupação do depósito (WMS)','ocupacao')
     +`<div class="kpi-grid">
-        ${kpi('Ocupação do depósito',pct(j.pct_ocupado),int(j.ocupadas)+' / '+int(j.posicoes)+' posições',C.accent)}
+        ${kpi('Ocupação do depósito',pct(j.pct_ocupado),int(j.ocupadas)+' / '+int(j.posicoes)+' · com estoque '+pct(j.pct_com_estoque),C.accent)}
         ${kpi('Posições livres',int(j.livres),pct(j.pct_livre)+' livre',C.green)}
         ${kpi('Produtos endereçados',int(j.produtos),'no depósito',C.accent2)}
         ${kpi('Média posições/produto',dec(j.media_pos,1),'espalhamento',C.purple)}
@@ -1291,12 +1303,12 @@ async function renderOcupacao(P){
       </div>
       <div class="row">
         <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas</small></h3>${ruasHtml(j.ruas||[])}
-          <div class="count-line">Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
+          <div class="count-line">Ocupação pelo <b>WMS (campo SITUAÇÃO)</b> — bate com o Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
         <div class="panel grow" style="flex:1 1 240px"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
           <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>
       </div>
       <div class="panel"><h3>Ocupação por item <small class="muted">· ${int(rows.length)} produtos endereçados · clique p/ ver as posições</small></h3>
-        <div class="count-line">Posições = slots ocupados pelo item · <b>% ocup.</b> = sobre as ${int(j.ocupadas)} posições ocupadas (não o total) · m³ = volume endereçado.</div>
+        <div class="count-line">Posições = slots <b>com estoque</b> do item · <b>% ocup.</b> = sobre as ${int(j.com_estoque)} posições com estoque (não o total) · m³ = volume endereçado.</div>
         ${renderTable(rows,cols,'ocupacao')}</div>`;
 }
 
