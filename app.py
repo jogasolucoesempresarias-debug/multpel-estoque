@@ -780,6 +780,40 @@ def _aplicar_filtros_cliente(produtos, skip=()):
     return out
 
 
+# checagens de qualidade da base (espelham QUAL_CHK do front)
+_QUAL_CHECKS = [
+    ("sem_custo",       "Sem custo",           lambda p: (p.get("custo_unit") or 0) <= 0),
+    ("sem_fornecedor",  "Sem fornecedor",      lambda p: p.get("codfornec") is None),
+    ("sem_comprador",   "Sem comprador",       lambda p: p.get("codcomprador") is None),
+    ("sem_giro",        "Sem giro c/ estoque", lambda p: (p.get("giro_dia") or 0) <= 0 and (p.get("qtdisp") or 0) > 0),
+    ("estoque_negativo","Estoque negativo",    lambda p: (p.get("qtdisp") or 0) < 0),
+]
+
+
+def _vazias_list(filiais):
+    """Posições ocupadas sem estoque (reservadas), já com descrição — p/ export da tabela."""
+    out = []
+    for r in pbi.run_dax(Q.q_ocupacao_vazias(filiais)):
+        cp = r.get("codprod")
+        out.append({
+            "endereco": "R%d·P%d·N%d·A%d" % (int(core._n(r.get("rua"))), int(core._n(r.get("predio"))),
+                                             int(core._n(r.get("nivel"))), int(core._n(r.get("apto")))),
+            "tipo": core.TIPO_WMS.get(r.get("tipo"), r.get("tipo") or "—"),
+            "codprod": int(core._n(cp)) if cp is not None else None,
+        })
+    cods = sorted({x["codprod"] for x in out if x.get("codprod") is not None})
+    if cods:
+        try:
+            dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+        except Exception:
+            dm = {}
+        for x in out:
+            cp = x.get("codprod")
+            x["descricao"] = dm.get(cp) or (f"Produto {cp}" if cp else "— sem produto")
+    out.sort(key=lambda x: (x["codprod"] is None, x["endereco"]))
+    return out
+
+
 def _export_data(view):
     """Devolve (cols, linhas) para a view, reaproveitado por CSV e XLSX. Respeita os filtros da UI."""
     if view == "validade":
@@ -858,18 +892,30 @@ def _export_data(view):
         cols = ["dtsaida", "mes", "numnota", "codfornec", "fornecedor", "codprod", "descricao",
                 "qt", "punit", "total", "comprador", "codfilial", "qtdisp"]
     elif view == "conferencia":
-        # relatório de conferência de uma rua (ordem de caminhada). cego=1 -> sem a qtd do
-        # sistema e com coluna em branco p/ anotar a contagem.
+        # relatório de conferência de uma rua (ordem de caminhada).
         linhas = [dict(x) for x in _rua_conferencia(int(request.args.get("rua") or 0))]
         _tp = request.args.get("tipo")           # Picking | Pulmão (filtro da tela)
         if _tp:
             linhas = [l for l in linhas if l.get("tipo") == _tp]
-        if request.args.get("cego") == "1":
-            for l in linhas:
-                l["contado"] = ""
-            cols = ["endereco", "tipo", "codprod", "descricao", "dtval", "situacao", "contado"]
-        else:
-            cols = ["endereco", "tipo", "codprod", "descricao", "qt", "dtval", "situacao"]
+        cols = ["endereco", "tipo", "codprod", "descricao", "qt", "dtval", "situacao"]
+    elif view == "vazias":
+        # posições ocupadas sem estoque (reservadas). Respeita o filtro Picking/Pulmão.
+        linhas = _vazias_list(_filiais_estoque())
+        _tp = request.args.get("tipo")
+        if _tp:
+            linhas = [l for l in linhas if l.get("tipo") == _tp]
+        cols = ["endereco", "tipo", "codprod", "descricao"]
+    elif view == "qualidade":
+        # produtos com cadastro/saldo inconsistente. cat opcional filtra 1 categoria.
+        produtos = _aplicar_filtros_cliente(_build_produtos()[0])
+        cat = request.args.get("cat")
+        linhas = []
+        for p in produtos:
+            probs = [(k, lbl) for k, lbl, fn in _QUAL_CHECKS if fn(p)]
+            if not probs or (cat and cat not in {k for k, _ in probs}):
+                continue
+            linhas.append({**p, "problemas": " · ".join(lbl for _, lbl in probs)})
+        cols = ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "custo_unit", "giro_mes", "problemas"]
     else:
         produtos, _, _ = _build_produtos()
         produtos = _aplicar_filtros_cliente(produtos)
@@ -930,6 +976,11 @@ _PDF_COLS = {
     "conferencia": [("endereco", "Endereço", "text"), ("tipo", "Tipo", "text"), ("codprod", "Cód", "text"),
                     ("descricao", "Produto", "text", 38), ("qt", "Qtd (sist.)", "int"),
                     ("dtval", "Validade", "text"), ("situacao", "Situação", "text")],
+    "vazias": [("endereco", "Endereço", "text"), ("tipo", "Tipo", "text"), ("codprod", "Cód", "text"),
+               ("descricao", "Produto que reservou a vaga", "text", 46)],
+    "qualidade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
+                  ("comprador", "Comprador", "text", 16), ("qtdisp", "Estoque", "int"), ("custo_unit", "Custo", "money"),
+                  ("giro_mes", "Giro/mês", "int"), ("problemas", "Problemas", "text", 34)],
     "produtos": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                  ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
                  ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"),

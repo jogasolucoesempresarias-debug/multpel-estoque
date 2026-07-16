@@ -398,8 +398,10 @@ function renderQualidade(P){
   const card=k=>`<div class="card kpi" data-cat="${k}" style="cursor:pointer;outline:${cat===k?'2px solid '+C[QUAL_CHK[k].cor]:'none'}">
     <div class="k-label"><span class="dot" style="background:${C[QUAL_CHK[k].cor]}"></span>${QUAL_CHK[k].lbl}</div>
     <div class="k-value">${int(counts[k])}</div></div>`;
+  const qqs=exportQS()+(cat?'&cat='+encodeURIComponent(cat):'');
   $('#v-qualidade').innerHTML=head('Qualidade da base — produtos com cadastro/saldo inconsistente')+
-    `<div class="kpi-grid">${keys.map(card).join('')}</div>
+    `<div style="display:flex;gap:8px;margin:0 0 10px"><a class="btn sm" href="/api/export/qualidade.xlsx?${qqs}">⬇ Excel</a><a class="btn sm" href="/api/export/qualidade.pdf?${qqs}">⬇ PDF</a></div>
+     <div class="kpi-grid">${keys.map(card).join('')}</div>
      <div class="count-line">${int(flagged.length)} produtos${cat?` na categoria <b>${QUAL_CHK[cat].lbl}</b> · <a href="#" id="qual-clear">limpar</a>`:' com ao menos um problema'}. Corrigir na origem (Winthor) melhora todas as telas.</div>
      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th><th class="num">Estoque</th><th class="num">Custo</th><th class="num">Giro/mês</th><th>Problemas</th></tr></thead>
      <tbody>${flagged.slice(0,400).map(({p,probs})=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.custo_unit?money(p.custo_unit):'—'}</td><td class="num">${int(p.giro_mes)}</td><td>${probs.map(badge1).join(' ')}</td></tr>`).join('')}</tbody></table>
@@ -1406,9 +1408,8 @@ async function openProduto(cod){
         const d=l.dtval?String(l.dtval).slice(0,10):null, pos=(d&&endVal[d])||[];
         const sub=pos.length?`<div class="count-line" style="margin:1px 2px 9px">${pos.length} pos: ${pos.slice(0,6).join(' · ')}${pos.length>6?` <span class="muted">(+${pos.length-6})</span>`:''}</div>`:'';
         return `<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>${sub}`;
-      }).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}
-      ${(p.sugestao_compra||0)>0?`<div class="m-acts"><button class="btn primary" id="d-pedido">Registrar pedido</button></div>`:''}`;
-    wireDrawer(); if($('#d-pedido'))$('#d-pedido').onclick=()=>{closeDrawer();modalPedido(p);};
+      }).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}`;
+    wireDrawer();
     buildPlanoChart(p.plano);
   }catch(e){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Erro: '+e.message+'</div>'; wireDrawer(); }
 }
@@ -1460,23 +1461,22 @@ function confPanel(conf){
   if(!conf) return '';
   if(conf.erro) return `<div class="panel"><div class="empty">Conferência indisponível: ${esc(conf.erro)}</div></div>`;
   const todas=conf.itens||[], its=S.confTipo?todas.filter(x=>x.tipo===S.confTipo):todas;
-  const qs=serverQS()+'&rua='+conf.rua+(S.ocCego?'&cego=1':'')+(S.confTipo?'&tipo='+encodeURIComponent(S.confTipo):'');
+  const qs=serverQS()+'&rua='+conf.rua+(S.confTipo?'&tipo='+encodeURIComponent(S.confTipo):'');
   const nvz=its.filter(x=>(x.situacao||'').startsWith('VAZIA')).length;
   return `<div class="panel" id="oc-conf" style="border-color:${C.accent}">
     <h3>Conferência — Rua ${int(conf.rua)} <small class="muted">· ${int(its.length)} posições · ${int(new Set(its.filter(x=>x.codprod).map(x=>x.codprod)).size)} itens · ${int(nvz)} devem estar vazias${S.confTipo?` · só ${esc(S.confTipo)}`:''}</small></h3>
     <div style="display:flex;gap:8px;margin:8px 0 4px;flex-wrap:wrap;align-items:center">
       <span class="seg" id="conf-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.confTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span>
-      <button class="btn sm" id="oc-cego">${S.ocCego?'✓ Contagem cega':'Contagem cega'}</button>
       <a class="btn sm" href="/api/export/conferencia.xlsx?${qs}">⬇ Excel</a>
       <a class="btn sm" href="/api/export/conferencia.pdf?${qs}">⬇ PDF</a>
       <button class="btn sm" id="oc-conf-x">✕ fechar</button>
     </div>
-    <div class="count-line">Ordem de caminhada (prédio → nível → apto). ${S.ocCego?'<b>Contagem cega</b>: quantidade oculta — anote o que contar.':'Quantidade do sistema p/ comparar com a prateleira.'} As <b>reservadas vazias</b> entram na lista pra confirmar que estão vazias.</div>
-    <div class="tbl-wrap" style="max-height:560px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto</th><th class="num">${S.ocCego?'Contado':'Qtd (sist.)'}</th><th>Validade</th><th>Situação</th></tr></thead>
+    <div class="count-line">Ordem de caminhada (prédio → nível → apto). Quantidade do sistema p/ comparar com a prateleira. As <b>reservadas vazias</b> entram na lista pra confirmar que estão vazias.</div>
+    <div class="tbl-wrap" style="max-height:560px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto</th><th class="num">Qtd (sist.)</th><th>Validade</th><th>Situação</th></tr></thead>
     <tbody>${its.map(x=>{const vz=(x.situacao||'').startsWith('VAZIA');
       return `<tr ${x.codprod?`data-cod="${x.codprod}" style="cursor:pointer"`:''}><td class="mono">${esc(x.endereco)}</td><td>${esc(x.tipo)}</td><td class="num">${x.codprod||'—'}</td>
         <td><span class="prod" title="${esc(x.descricao||'')}">${esc(x.descricao||'—')}</span></td>
-        <td class="num">${S.ocCego?'<span class="muted">_____</span>':(vz?'0':int(x.qt))}</td>
+        <td class="num">${vz?'0':int(x.qt)}</td>
         <td>${x.dtval?dt(x.dtval):'—'}</td>
         <td>${vz?`<span class="badge" style="background:${C.orange}22;color:${C.orange}">vazia (reservada)</span>`:''}</td></tr>`;}).join('')}</tbody></table></div></div>`;
 }
@@ -1549,7 +1549,6 @@ async function renderOcupacao(P){
   // rua clicável → conferência
   el.querySelectorAll('.oc-rua-row').forEach(x=>x.onclick=()=>{ const r=+x.dataset.rua, on=(S.ocRua===r); S.ocRua=on?null:r; S._ocScroll=!on; render(); });
   const cx=$('#oc-conf-x'); if(cx) cx.onclick=()=>{ S.ocRua=null; render(); };
-  const cg=$('#oc-cego'); if(cg) cg.onclick=()=>{ S.ocCego=!S.ocCego; render(); };
   // filtros picking/pulmão (listas em que a linha É uma posição)
   const ct=$('#conf-tipo'); if(ct) ct.querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{ S.confTipo=o.dataset.t||''; render(); });
   const vt=$('#vaz-tipo'); if(vt) vt.querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{ S.vazTipo=o.dataset.t||''; render(); });
@@ -1560,8 +1559,11 @@ function vaziasPanel(j){
   const todas=j.vazias||[]; if(!todas.length) return '';
   const list=S.vazTipo?todas.filter(v=>v.tipo===S.vazTipo):todas;
   const dm={}; (S.produtosAll||[]).forEach(p=>{dm[p.codprod]=p.descricao;});
+  const vqs=serverQS()+(S.vazTipo?'&tipo='+encodeURIComponent(S.vazTipo):'');
   return `<div class="panel" id="oc-vazias"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(list.length)} vagas${S.vazTipo?` · só ${esc(S.vazTipo)}`:''} · o que reservou cada uma</small></h3>
-    <div style="margin:6px 0 2px"><span class="seg" id="vaz-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.vazTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span></div>
+    <div style="display:flex;gap:8px;margin:6px 0 2px;align-items:center;flex-wrap:wrap"><span class="seg" id="vaz-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.vazTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span>
+      <a class="btn sm" href="/api/export/vazias.xlsx?${vqs}">⬇ Excel</a>
+      <a class="btn sm" href="/api/export/vazias.pdf?${vqs}">⬇ PDF</a></div>
     <div class="count-line">O WMS marca a posição como ocupada mas não há mercadoria. <b>Endereço fixo</b> → normal (a vaga é do produto, vai repor); senão, dá pra liberar. Clique p/ abrir o produto.</div>
     <div class="tbl-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Endereço</th><th>Tipo</th><th class="num">Cód</th><th>Produto que reservou a vaga</th></tr></thead>
     <tbody>${list.map(v=>{const nm=v.descricao||dm[v.codprod]||(v.codprod?('Produto '+v.codprod):'— sem produto');
