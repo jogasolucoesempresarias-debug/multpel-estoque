@@ -1524,13 +1524,14 @@ async function renderOcupacao(P){
     +`<div class="kpi-grid">
         ${kpi('Ocupação do depósito',pct(j.pct_ocupado),int(j.ocupadas)+' / '+int(j.posicoes)+' · com estoque '+pct(j.pct_com_estoque),C.accent)}
         ${kpi('Posições livres',int(j.livres),pct(j.pct_livre)+' livre',C.green)}
+        ${kpi('Bloqueados',int(j.bloqueados),'fora da conta · à parte',C.red)}
         ${kpi('Produtos endereçados',int(j.produtos),'no depósito',C.accent2)}
         ${kpi('Média posições/produto',dec(j.media_pos,1),'espalhamento',C.purple)}
         ${mortoCard}
       </div>
       <div class="row">
         <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas · clique numa rua p/ conferir</small></h3>${ruasHtml(j.ruas||[])}
-          <div class="count-line">Ocupação pelo <b>WMS (campo SITUAÇÃO)</b> — bate com o Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
+          <div class="count-line">Régua do <b>WMS</b> (exclui bloqueados · inclui RUA 99) — bate com a consulta 1772 do Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
         <div class="grow" style="flex:1 1 240px;display:flex;flex-direction:column;gap:16px;min-width:0">
           <div class="panel" style="margin:0"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
             <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>

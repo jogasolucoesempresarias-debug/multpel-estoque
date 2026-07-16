@@ -1420,9 +1420,10 @@ def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None, vazias_rows=None):
     Denominador = posições ativas (PCENDERECO); ocupadas = posições distintas com QT>0.
     media_pos = pares (produto×posição) / produtos endereçados."""
     k = kpi_rows[0] if kpi_rows else {}
-    pos = int(_n(k.get("posicoes")))
+    pos = int(_n(k.get("posicoes")))          # régua WMS: não-bloqueadas, todas as ruas
     occ = int(_n(k.get("ocupadas")))          # OFICIAL: WMS SITUACAO="O"
     ce = int(_n(k.get("com_estoque")))        # secundário: com estoque físico (QT>0)
+    blq = int(_n(k.get("bloqueados")))        # à parte: BLOQUEIO="S"
     prod = int(_n(k.get("produtos")))
     pares = int(_n(k.get("pares")))
     livres = max(0, pos - occ)
@@ -1466,7 +1467,7 @@ def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None, vazias_rows=None):
     vazias_com_prod = sum(1 for v in vazias if v["codprod"] is not None)
     return {
         "posicoes": pos, "ocupadas": occ, "livres": livres, "produtos": prod,
-        "com_estoque": ce,
+        "com_estoque": ce, "bloqueados": blq,
         "vazias": vazias, "vazias_total": len(vazias), "vazias_com_prod": vazias_com_prod,
         "pct_ocupado": _round(occ / pos, 4) if pos else 0,
         "pct_livre": _round(livres / pos, 4) if pos else 0,

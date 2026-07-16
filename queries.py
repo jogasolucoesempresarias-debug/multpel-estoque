@@ -470,18 +470,21 @@ def q_produto_enderecos(codprod, filiais=None):
 
 
 def q_ocupacao_kpis(filiais=None):
-    """KPIs de ocupação. OFICIAL = posições marcadas ocupadas pelo WMS (SITUACAO="O");
-    'com_estoque' = as que têm estoque físico agora (QT>0) — leitura secundária."""
+    """KPIs de ocupação na RÉGUA DO WMS (consulta 1772): exclui BLOQUEADO (BLOQUEIO="N") e
+    inclui TODAS as ruas (a 99 conta como física no WMS). Bloqueados vão à parte.
+    'com_estoque' = posições com estoque físico agora (QT>0) — leitura secundária."""
     lista = _lista_filiais_dax(filiais)
-    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
-    focc = ['PCENDERECO[RUA] <> 99', 'PCESTENDERECO[QT] > 0']
+    fpos = ['PCENDERECO[ATIVO] = "S"', 'PCENDERECO[BLOQUEIO] = "N"']
+    focc = ['PCESTENDERECO[QT] > 0', 'PCENDERECO[BLOQUEIO] = "N"']
+    fbloq = ['PCENDERECO[ATIVO] = "S"', 'PCENDERECO[BLOQUEIO] = "S"']
     if lista:
-        fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
-        focc.append(f"PCENDERECO[CODFILIAL] IN {lista}")
+        for f in (fpos, focc, fbloq):
+            f.append(f"PCENDERECO[CODFILIAL] IN {lista}")
     focc_situ = fpos + ['PCENDERECO[SITUACAO] = "O"']
     return f"""EVALUATE ROW(
     "posicoes", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(fpos)}),
     "ocupadas", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(focc_situ)}),
+    "bloqueados", CALCULATE(COUNTROWS(PCENDERECO), {", ".join(fbloq)}),
     "com_estoque", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODENDERECO]), {", ".join(focc)}),
     "produtos", CALCULATE(DISTINCTCOUNT(PCESTENDERECO[CODPROD]), {", ".join(focc)}),
     "pares", CALCULATE(COUNTROWS(SUMMARIZE(PCESTENDERECO, PCESTENDERECO[CODPROD], PCESTENDERECO[CODENDERECO])), {", ".join(focc)})
@@ -506,9 +509,9 @@ FILTER(
 
 
 def q_ocupacao_por_rua(filiais=None):
-    """Por RUA: posições totais (PCENDERECO ativas) e ocupadas (PCESTENDERECO QT>0)."""
+    """Por RUA: posições (não bloqueadas) e ocupadas (SITUACAO="O") — régua do WMS."""
     lista = _lista_filiais_dax(filiais)
-    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    fpos = ['PCENDERECO[ATIVO] = "S"', 'PCENDERECO[BLOQUEIO] = "N"']
     if lista:
         fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
     inner = """ADDCOLUMNS(
@@ -520,9 +523,9 @@ def q_ocupacao_por_rua(filiais=None):
 
 
 def q_ocupacao_por_tipo(filiais=None):
-    """Por TIPOENDER (AP=picking / AE=pulmão): posições ativas e ocupadas (WMS SITUACAO="O")."""
+    """Por TIPOENDER (AP=picking / AE=pulmão): posições (não bloqueadas) e ocupadas — régua WMS."""
     lista = _lista_filiais_dax(filiais)
-    fpos = ['PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    fpos = ['PCENDERECO[ATIVO] = "S"', 'PCENDERECO[BLOQUEIO] = "N"']
     if lista:
         fpos.append(f"PCENDERECO[CODFILIAL] IN {lista}")
     inner = """ADDCOLUMNS(
@@ -557,7 +560,7 @@ def q_ocupacao_vazias(filiais=None, rua=None):
     (nenhum registro com QT>0) — o 'reservado vazio' — + o produto alocado à vaga.
     `rua` opcional restringe a uma rua (usado na conferência)."""
     lista = _lista_filiais_dax(filiais)
-    fbase = ['PCENDERECO[SITUACAO] = "O"', 'PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"']
+    fbase = ['PCENDERECO[SITUACAO] = "O"', 'PCENDERECO[RUA] <> 99', 'PCENDERECO[ATIVO] = "S"', 'PCENDERECO[BLOQUEIO] = "N"']
     if rua is not None:
         fbase.append(f"PCENDERECO[RUA] = {int(rua)}")
     if lista:
