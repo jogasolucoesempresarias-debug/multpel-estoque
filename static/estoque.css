@@ -116,6 +116,12 @@ h2.section { font-size: 1rem; margin: 4px 0 14px; font-weight: 700; }
 .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .grow { flex: 1; min-width: 0; }
 
+/* grid de resumos gerenciais — colunas de MESMA altura (bordas alinhadas em cima e embaixo);
+   colapsa sozinho quando falta largura (auto-fit). Neutraliza a margem dos painéis (usa gap). */
+.gg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px,1fr)); gap: 16px; margin-bottom: 16px; align-items: stretch; }
+.gg-grid > .panel, .gg-col > .panel { margin-bottom: 0; }
+.gg-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
 /* ───── cards / KPIs ───── */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr)); gap: 13px; margin-bottom: 18px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 13px; padding: 16px; }

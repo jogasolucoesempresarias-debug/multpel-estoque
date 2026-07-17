@@ -102,6 +102,24 @@ def previsao_giro_mensal(serie_am, meses, hoje):
     return round(total / len(chaves)) if chaves else None
 
 
+def giro_novo_item(serie_am, hoje, janela=6):
+    """Giro mensal p/ ITEM NOVO cujo giro média-3m oficial deu 0 (os campos QTVENDMES1..3 do
+    PCEST são os 3 meses FECHADOS anteriores — ainda zerados p/ item com <3 meses de casa),
+    mas que já teve venda REAL recente (RCA). Média da qtd vendida sobre os meses ativos, do
+    1º mês com venda (dentro da janela) até o mês fechado mais recente — não dilui pelos meses
+    anteriores ao lançamento. serie_am: {AnoMes: qtd}. None se nunca vendeu na janela."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(janela))          # meses fechados, mais recente 1º
+    com_dado = [am for am in chaves if _n(serie_am.get(am)) > 0]
+    if not com_dado:
+        return None
+    prim = min(com_dado)                                    # 1º mês com venda dentro da janela
+    ativos = [am for am in chaves if am >= prim]            # do lançamento até o mês fechado atual
+    total = sum(_n(serie_am.get(am)) for am in ativos)
+    return round(total / len(ativos)) if ativos else None
+
+
 def fatores_sazonais(serie_am, hoje, janela=24, min_meses=12):
     """Índices sazonais ano-a-ano a partir da venda mensal (RCA).
     media_mensal = média dos últimos `janela` meses (naturalmente dessazonalizada);
@@ -266,6 +284,13 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             giro_mes, giro_fonte = giro_forecast, "forecast"
         else:
             giro_mes, giro_fonte = giro_media3, "media3"
+        # fallback ITEM NOVO: giro média-3m deu 0 (3 meses fechados ainda zerados p/ item novo)
+        # mas há venda real recente no RCA → deriva o giro dos meses desde o lançamento. Só no
+        # caminho oficial (media3); forecast/sazonal já tratam item novo pela própria série RCA.
+        if giro_fonte == "media3" and giro_mes <= 0:
+            gnovo = giro_novo_item(serie_am, hoje)
+            if gnovo and gnovo > 0:
+                giro_mes, giro_fonte = gnovo, "novo_item"
         giro_dia = giro_mes / 30.0
         serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
         # série mensal (até 12 últimos meses, ordem cronológica) p/ sparkline do 360°
@@ -745,6 +770,9 @@ def ruptura_por_comprador(produtos):
         saida.append({
             **g,
             "pct_ruptura": _round(g["n_ruptura"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
+            # % dos itens SEM pedido sobre o TOTAL de produtos do comprador (base da meta —
+            # todo item do comprador conta, não só os em ruptura). Complementa o pct_ruptura.
+            "pct_sem_pedido": _round(g["n_sem_pedido"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
             "venda_perdida": _round(g["venda_perdida"]),
             "custo_reposicao": _round(g["custo_reposicao"]),
         })
@@ -1027,6 +1055,42 @@ def resumo_ruptura(produtos):
         "venda_perdida": _round(sum((p.get("venda_perdida") or 0) for p in rup)),
         "valor": _round(sum(p.get("valor") or 0 for p in rup)),  # mantido p/ compat (≈0)
         "criterio": "ESTOQUE <= 0 E GIRO MENSAL > 0",
+    }
+
+
+def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
+    """Cobertura MÍNIMA de estoque (pedido do diretor) — % de SKUs por faixa de cobertura:
+    • Em risco  = giro > 0 e cobertura ≤ `limiar_dias` (45d)
+    • Ideal     = giro > 0 e cobertura ≥ `limiar_dias`+1 (46d+)
+    • Sem giro  = giro ≤ 0 (reportado à parte; NÃO entra no % ideal p/ não distorcer)
+    O % ideal é medido só sobre os itens QUE GIRAM (base da 'cobertura mínima'); o gatilho de
+    alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha."""
+    risco = ideal = semgiro = 0
+    v_risco = v_ideal = v_semgiro = 0.0
+    for p in produtos:
+        giro_dia = p.get("giro_dia") or 0
+        valor = p.get("valor") or 0
+        if giro_dia <= 0:
+            semgiro += 1; v_semgiro += valor
+            continue
+        cob = cobertura_dias_oficial(p.get("qtdisp") or 0, giro_dia)
+        if cob <= limiar_dias:
+            risco += 1; v_risco += valor
+        else:
+            ideal += 1; v_ideal += valor
+    com_giro = risco + ideal
+    total = com_giro + semgiro
+    pct_ideal = (ideal / com_giro) if com_giro else None
+    return {
+        "limiar": limiar_dias, "meta_pct": meta_pct,
+        "em_risco": {"n": risco, "valor": _round(v_risco),
+                     "pct": _round(risco / com_giro, 4) if com_giro else None},
+        "ideal": {"n": ideal, "valor": _round(v_ideal),
+                  "pct": _round(pct_ideal, 4) if pct_ideal is not None else None},
+        "sem_giro": {"n": semgiro, "valor": _round(v_semgiro),
+                     "pct": _round(semgiro / total, 4) if total else None},
+        "com_giro": com_giro, "total": total,
+        "alerta": bool(pct_ideal is not None and pct_ideal < meta_pct),
     }
 
 

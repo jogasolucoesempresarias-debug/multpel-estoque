@@ -15,7 +15,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
+  cli:{comprador:'',curva:[],xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
@@ -48,6 +48,11 @@ const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
 const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
+// filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
+const CURVA_LABEL=arr=>(!arr||!arr.length||arr.length===3)?'Todas':arr.slice().sort().join(' · ');
+function syncCurvaUI(){ const d=$('#f-curva'); if(!d) return; const arr=S.cli.curva||[];
+  const sum=d.querySelector('summary'); if(sum) sum.textContent=CURVA_LABEL(arr);
+  d.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=arr.includes(c.value)); }
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
 const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
 const abastLabel=arr=>!arr.length?'Todos':(arr.length===1?(ABAST_LABELS[arr[0]]||arr[0]):`${arr.length} status`);
@@ -111,7 +116,7 @@ function filtered(skipCurva){
   const f=S.cli, b=f.busca.trim().toLowerCase();
   return S.produtosAll.filter(p=>{
     if(f.comprador && String(p.codcomprador)!==f.comprador) return false;
-    if(!skipCurva && f.curva && p.curva_abc!==f.curva) return false;
+    if(!skipCurva && f.curva.length && !f.curva.includes(p.curva_abc)) return false;
     if(f.xyz && p.xyz!==f.xyz) return false;
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
@@ -189,7 +194,7 @@ function wireSortTbl(container,skKey,onChange){ if(!container)return; container.
 function exportQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
   if(f.comprador) p.set('comprador_cod',f.comprador);
-  if(f.curva) p.set('curva',f.curva);
+  if(f.curva && f.curva.length) p.set('curva',f.curva.join(','));
   if(f.xyz) p.set('xyz',f.xyz);
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
@@ -853,7 +858,7 @@ function renderABCXYZ(P){
       <div class="panel grow" style="flex:1 1 300px"><h3>Estratégia por zona</h3>${leg}
         <h3 style="margin-top:18px">Leitura</h3>${read}</div>
     </div>`;
-  $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=k[0];S.cli.xyz=k[1];$('#f-curva').value=k[0];$('#f-xyz').value=k[1];goView('produtos',{});});
+  $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=[k[0]];S.cli.xyz=k[1];syncCurvaUI();$('#f-xyz').value=k[1];goView('produtos',{});});
 }
 
 function renderFornecedores(P){
@@ -879,7 +884,7 @@ function renderFornecedores(P){
     {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pv',label:'% venda',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
   const CLS={alta_performance:'Alta performance',equilibrado:'Equilibrado',estoque_alto:'Estoque alto',ruptura:'Ruptura',critico_sem_giro:'Crítico s/ giro'};
-  const Fabc=S.cli.curva?F.filter(r=>r.curva_abc===S.cli.curva):F;   // filtro Curva = ABC do fornecedor
+  const Fabc=(S.cli.curva&&S.cli.curva.length)?F.filter(r=>S.cli.curva.includes(r.curva_abc)):F;   // filtro Curva = ABC do fornecedor
   const Ff=S.cli.fornClasse?Fabc.filter(r=>r.cl===S.cli.fornClasse):Fabc;
   const sk=S.sort['fornecedores']||{key:'valor',dir:-1};
   const rows=[...Ff].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(typeof x==='string')return sk.dir*x.localeCompare(y);return sk.dir*((x||0)-(y||0));});
@@ -905,18 +910,18 @@ function renderRupturaComprador(P){
       if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
         o.perdida+=(p.venda_perdida||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);
         if(p.dias_sem_venda!=null){o.diasSum+=p.dias_sem_venda; o.diasN++;}}});
-    return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0,diasrup:o.diasN?Math.round(o.diasSum/o.diasN):0})).filter(o=>o.n>0);
+    return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0,pctSemPed:o.n?o.semped/o.n*100:0,diasrup:o.diasN?Math.round(o.diasSum/o.diasN):0})).filter(o=>o.n>0);
   }
   const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
-    {k:'diasrup',label:'Dias rupt. méd',num:1},{k:'semped',label:'Sem pedido',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
+    {k:'diasrup',label:'Dias rupt. méd',num:1},{k:'semped',label:'Sem pedido',num:1},{k:'pctSemPed',label:'% s/ ped.',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
   function tabela(rows0,skk,lbl0,nav){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
     const ck=[{k:'nome',label:lbl0},...ckBase];
     const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor,diasSum:s.diasSum+r.diasSum,diasN:s.diasN+r.diasN}),{n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0});
-    const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${T.diasN?int(Math.round(T.diasSum/T.diasN))+'d':'—'}</td><td class="num">${int(T.semped)}</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
+    const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${T.diasN?int(Math.round(T.diasSum/T.diasN))+'d':'—'}</td><td class="num">${int(T.semped)}</td><td class="num">${T.n?dec(T.semped/T.n*100,1):'0'}%</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
     return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${r.diasrup?int(r.diasrup)+'d':'—'}</td><td class="num">${int(r.semped)}</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
+      <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${r.diasrup?int(r.diasrup)+'d':'—'}</td><td class="num">${int(r.semped)}</td><td class="num">${dec(r.pctSemPed,1)}%</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="9" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
   }
   const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
   const porCurva=agrupa(p=>p.curva_abc||'C', (p,k)=>'Curva '+k);
@@ -929,7 +934,7 @@ function renderRupturaComprador(P){
        ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
        ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
-     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real); <b>"% s/ ped."</b> = sem pedido ÷ total de produtos do comprador (base da meta — todo item conta). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
      <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);
@@ -1039,7 +1044,7 @@ function renderComprasVendas(P){
       {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
       {k:'margem',label:'Margem',num:1},{k:'turn',label:'Venda/Estoque',num:1},{k:'rupt',label:'Ruptura',num:1},{k:'pct_rupt',label:'% Rupt.',num:1},{k:'parado',label:'Parado R$',num:1}];
     const skk='cv_'+dim, sk=S.sort[skk]||{key:'venda',dir:-1};
-    const rows0f=(dim==='fornecedor'&&S.cli.curva)?rows0.filter(o=>o.curva_abc===S.cli.curva):rows0;
+    const rows0f=(dim==='fornecedor'&&S.cli.curva.length)?rows0.filter(o=>S.cli.curva.includes(o.curva_abc)):rows0;
     const rows=[...rows0f].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
       if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
     const totE=rows.reduce((s,r)=>s+r.estoque,0),totV=rows.reduce((s,r)=>s+r.venda,0),totL=rows.reduce((s,r)=>s+r.lucro,0);
@@ -1102,8 +1107,8 @@ async function renderOrcamento(useCache){
     </div>
     ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
-      <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
-      <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor).</div></div>`:''}`;
+      <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.xlsx" title="Planilha de importação do Winthor (cód · preço · qtd)">⬇ Excel</a> <a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor). <b>⬇ Excel</b> = planilha de importação de pedido do Winthor (v26+): código · preço unitário · quantidade (un).</div></div>`:''}`;
   $('#btn-pedido').onclick=()=>modalPedido(null);
   wireSortTbl($('#orc-comp'),'orc_comp',()=>renderOrcamento(true));
   wireSortTbl($('#orc-abertos'),'orc_abertos',()=>renderOrcamento(true));
@@ -1157,16 +1162,43 @@ async function injectResumos(sel){
     ['Venda perdida (ruptura)',money(rup.venda_perdida)],
     ['Critério',rup.criterio||'ESTOQUE ≤ 0 E GIRO > 0'],
   ],C.red);
+  // Estoque ideal — cobertura mínima (0-45 risco / 46+ ideal) + "sem giro" à parte + gatilho <90%
+  const ei=o.estoque_ideal||{}, iId=ei.ideal||{}, iRis=ei.em_risco||{}, iSem=ei.sem_giro||{};
+  const metaPct=ei.meta_pct||0.90, alerta=!!ei.alerta, corIdeal=alerta?C.red:C.green;
+  const idealPanel=`<div class="panel" id="gg-ideal-panel"${alerta?` style="border-color:${C.red}"`:''}>
+      <h3><span>Estoque ideal — cobertura mínima</span>${alerta
+        ?`<span class="badge" style="background:${C.red}22;color:${C.red}">⚠ abaixo da meta (≥${dec(metaPct*100,0)}%)</span>`
+        :`<span class="badge" style="background:${C.green}22;color:${C.green}">✓ dentro da meta</span>`}</h3>
+      <div class="row" style="align-items:center">
+        <div style="flex:0 0 190px;position:relative">
+          <div class="chart-box sm" style="height:180px"><canvas id="gg-ideal"></canvas></div>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
+            <div style="font-size:1.5rem;font-weight:700;color:${corIdeal};line-height:1">${iId.pct!=null?pct(iId.pct):'—'}</div>
+            <div style="font-size:.58rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px">ideal ≥46d</div>
+          </div>
+        </div>
+        <div class="grow">
+          <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px">
+            ${kpi('Cobertura ideal (≥46d)',iId.pct!=null?pct(iId.pct):'—',int(iId.n)+' SKUs · '+moneyK(iId.valor),corIdeal)}
+            ${kpi('Em risco (≤45d)',iRis.pct!=null?pct(iRis.pct):'—',int(iRis.n)+' SKUs · '+moneyK(iRis.valor),C.red)}
+            ${kpi('Sem giro',iSem.pct!=null?pct(iSem.pct):'—',int(iSem.n)+' SKUs · '+moneyK(iSem.valor),C.dim)}
+          </div>
+          <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥46 dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
+        </div>
+      </div></div>`;
   el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos</span></h2>
-    <div class="row">${cardOrc}${cardRup}</div>
-    <div class="row">
+    <div class="gg-grid">${cardOrc}${cardRup}</div>
+    ${idealPanel}
+    <div class="gg-grid">
       ${resumoTabela('Itens a vencer por faixa de validade',o.validade.faixas,o.validade.total,'itens','Itens')}
-      <div class="grow" style="min-width:0">
+      <div class="gg-col">
         ${resumoTabelaGrupo('Cobertura de estoque',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return !isNaN(n)&&n<91;}),'produtos','Produtos')}
         ${resumoTabelaGrupo('Estoque parado',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return isNaN(n)||n>=91;}),'produtos','Produtos')}
       </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
+  chart('gg-ideal',{type:'doughnut',data:{labels:['Ideal (≥46d)','Em risco (≤45d)'],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},
+    options:{cutout:'66%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' SKUs'}}}}});
 }
 
 // paleta p/ o donut de lucro por comprador
@@ -1385,6 +1417,7 @@ async function openProduto(cod){
       <div class="bar"><i style="width:${cobPct}%"></i></div>
       ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='sazonal'?`<div class="count-line">Giro por <b>forecast sazonal (RCA, 24m)</b>: ${int(p.giro_mes)}/mês${p.fatores_sazonais?` · fator do mês ${dec(p.fatores_sazonais[new Date().getMonth()+1]||1,2)}×`:''} · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
+      ${p.giro_fonte==='novo_item'?`<div class="count-line">Giro por <b>item novo</b>: ${int(p.giro_mes)}/mês — média da venda real (RCA) desde o lançamento. Os 3 meses fechados do giro oficial ainda estão zerados (produto com menos de 3 meses de casa).</div>`:''}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
@@ -1609,7 +1642,7 @@ function render(){
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade,ocupacao:renderOcupacao}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=filt.curva;$('#f-curva').value=filt.curva;} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -1646,7 +1679,7 @@ async function init(){
   $('#f-comprador').onchange=e=>{ S.cli.comprador=e.target.value; S.compradorNome=e.target.value?(e.target.selectedOptions[0]?.textContent||''):''; render(); };
   $('#f-unidade').onchange=e=>{S.unidade=e.target.value; S.cli.comprador=''; $('#f-comprador').value=''; S.compradorNome=''; loadData();};
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};
-  $('#f-curva').onchange=e=>{S.cli.curva=e.target.value;render();};
+  { const fc=$('#f-curva'); if(fc) fc.addEventListener('change',()=>{ S.cli.curva=[...fc.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); syncCurvaUI(); render(); }); }
   $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};
   $('#f-fornec').onchange=e=>{
     const raw=(e.target.value||'').trim(), low=raw.toLowerCase(), L=S.fornecedores||[];
@@ -1664,10 +1697,10 @@ async function init(){
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:'',xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
+    S.cli={comprador:'',curva:[],xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
     S.compradorNome='';
-    ['#f-comprador','#f-curva','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
-    $('#f-busca').value='';
+    ['#f-comprador','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
+    $('#f-busca').value=''; syncCurvaUI();
     render();
   };
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};

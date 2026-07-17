@@ -389,8 +389,14 @@ def _build_produtos():
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
-    venda_mensal = (_vendas_mensal_map(params["forecast_meses"], _hoje(), profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
-                    if params.get("forecast") else None)
+    # série mensal do RCA: sempre buscada (cache 12h). Com forecast ligado alimenta o forecast;
+    # com forecast desligado serve ao fallback de giro dos ITENS NOVOS (giro média-3m = 0 + venda
+    # real recente) em core.construir_produtos. Janela de 6m cobre o fallback quando forecast off.
+    if params.get("forecast"):
+        venda_mensal = _vendas_mensal_map(params["forecast_meses"], _hoje(),
+                                          profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
+    else:
+        venda_mensal = _vendas_mensal_map(6, _hoje(), filiais=filiais_v)
     ja_pedida = _pedidos_data(filiais_e, _hoje())["ja_pedida"]
     embalagem = _embalagem_map()
     preco_venda = _preco_venda_map(filiais_v)
@@ -607,6 +613,7 @@ def api_resumos():
         "gerado_em": hoje.isoformat(),
         "validade": core.resumo_validade(lotes, idx, hoje=hoje),
         "cobertura": core.resumo_cobertura(prod_f),
+        "estoque_ideal": core.resumo_estoque_ideal(prod_f),
         "orcamento": orc["resumo"],
         "ruptura": core.resumo_ruptura(prod_f),
     })
@@ -746,7 +753,8 @@ def _aplicar_filtros_cliente(produtos, skip=()):
     if cc:
         out = [p for p in out if str(p.get("codcomprador")) == cc]
     if "curva" not in skip and g("curva"):
-        out = [p for p in out if p.get("curva_abc") == g("curva")]
+        _cv = {x for x in g("curva").split(",") if x}   # multi-seleção de curva (A/B/C)
+        out = [p for p in out if p.get("curva_abc") in _cv]
     if g("xyz"):
         out = [p for p in out if p.get("xyz") == g("xyz")]
     if g("fornec"):
@@ -846,7 +854,8 @@ def _export_data(view):
         linhas = core.fornecedores(_aplicar_filtros_cliente(produtos, skip={"curva"}), params)
         _cv = request.args.get("curva")
         if _cv:
-            linhas = [r for r in linhas if r.get("curva_abc") == _cv]
+            _cvset = {x for x in _cv.split(",") if x}
+            linhas = [r for r in linhas if r.get("curva_abc") in _cvset]
         fc = request.args.get("forn_classe")
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
@@ -861,7 +870,7 @@ def _export_data(view):
         produtos, _, _ = _build_produtos()
         linhas = core.ruptura_por_comprador(_aplicar_filtros_cliente(produtos))
         cols = ["codcomprador", "comprador", "n_produtos", "n_ruptura", "pct_ruptura",
-                "n_sem_pedido", "venda_perdida", "custo_reposicao"]
+                "n_sem_pedido", "pct_sem_pedido", "venda_perdida", "custo_reposicao"]
     elif view == "desempenho":
         linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje(), _filiais_venda())["compradores"]
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
@@ -1013,7 +1022,8 @@ _PDF_COLS = {
                     ("margem", "Margem", "pct")],
     "ruptura_comprador": [("comprador", "Comprador", "text", 30), ("n_produtos", "Produtos", "int"),
                           ("n_ruptura", "Em ruptura", "int"), ("pct_ruptura", "% Rupt.", "num"),
-                          ("n_sem_pedido", "Sem pedido", "int"), ("venda_perdida", "Venda perdida/mês", "money"),
+                          ("n_sem_pedido", "Sem pedido", "int"), ("pct_sem_pedido", "% s/ ped.", "num"),
+                          ("venda_perdida", "Venda perdida/mês", "money"),
                           ("custo_reposicao", "Custo reposição", "money")],
     "desempenho": [("ranking", "#", "int"), ("comprador", "Comprador", "text", 28),
                    ("clientes_pos", "Positivação", "int"), ("venda_liquida", "Venda líq.", "money"),
@@ -1425,6 +1435,31 @@ def api_pedido_itens_winthor(numped):
                       "qtped": core._round(qp), "qtentregue": core._round(qe), "aberto": core._round(max(0.0, qp - qe))})
     itens.sort(key=lambda x: x["codprod"])
     return jsonify({"ok": True, "numped": numped, "itens": itens})
+
+
+@app.route("/api/pedidos/<int:pid>.xlsx")
+def api_pedido_xlsx(pid):
+    """Planilha de importação de pedido de compra do Winthor (v26+): 3 colunas, SEM cabeçalho —
+    A = código do produto · B = preço unitário · C = quantidade pedida (em UNIDADES)."""
+    if not store.disponivel():
+        return jsonify({"ok": False, "error": "Postgres indisponível"}), 503
+    pe = store.pedido_get(pid)
+    if not pe:
+        return jsonify({"ok": False, "error": "Pedido não encontrado"}), 404
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "PEDIDO"
+    for it in store.pedido_itens(pid):
+        cod = int(core._n(it.get("codprod")))
+        preco = core._round(core._n(it.get("custo_unit")), 4)
+        qtd = int(round(core._n(it.get("qtd"))))
+        if cod <= 0 or qtd <= 0:
+            continue
+        ws.append([cod, preco, qtd])   # ordem exata do modelo Winthor: cód · preço · qtd
+    bio = io.BytesIO(); wb.save(bio); bio.seek(0)
+    base = re.sub(r'[^A-Za-z0-9 ._-]', '', str(pe.get("fornecedor") or "").strip()) or f"pedido_{pe.get('n_pedido') or pid}"
+    return Response(bio.getvalue(),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="winthor_{base}.xlsx"'})
 
 
 @app.route("/api/pedidos/<int:pid>.pdf")
