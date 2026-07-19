@@ -326,3 +326,29 @@ table.mini { width: 100%; font-size: .8rem; border-collapse: collapse; }
 table.mini td { padding: 5px 6px; border-top: 1px solid var(--border); }
 table.mini td.num { text-align: right; font-family: 'JetBrains Mono', monospace; color: var(--text-dim); }
 table.mini .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+
+/* ───── tooltip de ajuda (hover nos títulos e cabeçalhos calculados) ───── */
+/* ícone ⓘ discreto ao lado do texto — inline, não desloca o layout */
+.ttip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-left: 5px; flex: none; vertical-align: middle;
+  border-radius: 50%; border: 1px solid var(--text-mute);
+  font-family: 'DM Sans', system-ui, sans-serif; font-size: 9px; font-weight: 700; font-style: normal;
+  line-height: 1; color: var(--text-mute); background: transparent; cursor: help;
+  text-transform: none; letter-spacing: 0; user-select: none; transition: color .12s, border-color .12s;
+}
+th .ttip { position: relative; top: -1px; }
+.ttip:hover, .ttip:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.ttip:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+/* caixinha única, presa ao body via position:fixed → nunca cortada por overflow das tabelas */
+#tt-pop {
+  position: fixed; z-index: 90; max-width: 280px; pointer-events: none;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 8px 11px; font-size: .78rem; font-weight: 400; line-height: 1.42;
+  text-transform: none; letter-spacing: 0; text-align: left; white-space: normal;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  opacity: 0; visibility: hidden; transition: opacity .12s;
+}
+#tt-pop.on { opacity: 1; visibility: visible; }
+@media (prefers-reduced-motion: reduce) { .ttip, #tt-pop { transition: none; } }

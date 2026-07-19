@@ -73,6 +73,166 @@ function toast(msg,err){ const t=document.createElement('div'); t.className='toa
 async function getJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
 async function postJSON(u,body,method){ const r=await fetch(u,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
 
+/* ───────── tooltips de ajuda (hover nos títulos e cabeçalhos calculados) ─────────
+   Textos auditados contra core.py/queries.py (catálogo validado). COMMON = colunas que se
+   repetem; cada view pode sobrescrever um rótulo. `_title` = tooltip do título da aba (head()).
+   Colunas óbvias (Cód, Produto, Fornecedor, Data, Nº…) ficam de fora de propósito. */
+const TIPS = {
+  COMMON: {
+    'ABC':'Curva de venda (Pareto): A ≈ 80% do valor de venda, B ≈ 15%, C o restante.',
+    'XYZ':'Variabilidade da demanda: X estável, Y variável, Z errático (pelo desvio da venda dos 3 meses).',
+    'Disp.':'Estoque disponível (gerencial): QTESTGER − avaria − reserva, nas filiais de estoque. É o que está livre para vender.',
+    'Disp. cx':'Disponível convertido em caixas (disp. ÷ fator un/cx da caixa).',
+    'Já ped.':'Pedido de compra REAL em aberto no Winthor (quantidade pedida − entregue, últimos 180 dias).',
+    'Giro/mês':'Venda média por mês — média dos 3 últimos meses fechados (ou forecast / item novo, quando aplicável).',
+    'Giro cx':'Giro mensal em caixas (giro ÷ fator un/cx da caixa).',
+    'Cob.':'Cobertura em dias = disponível ÷ giro diário. Giro 0 = não calculável (∞). Na aba Cobertura o cálculo usa ARREDONDA.CIMA (regra oficial da planilha).',
+    'Valor estoque':'Valor do estoque disponível a custo (disponível × custo do produto).',
+    'Estoque R$':'Valor do estoque disponível a custo (disponível × custo do produto).',
+    'Sugerido':'Compra sugerida em caixas fechadas (e o equivalente em unidades) para repor até o alvo.',
+    'Sugerido (cx)':'Compra sugerida em caixas fechadas (e o equivalente em unidades) para repor até o alvo.',
+    'Venda':'Venda líquida no período (venda − devoluções).',
+    'Lucro':'Venda líquida − custo.',
+    'Margem':'Lucro ÷ venda líquida.',
+  },
+  gerencial:{ 'Status':'Nível de atenção da faixa (urgente, alto, atenção, baixo, OK…).' },
+  ruptura:{
+    _title:'Distribuição do estoque por dias de cobertura. Cobertura = ARREDONDA.CIMA(estoque ÷ giro diário); giro 0 = não calculável (cai em 121+). Métrica oficial da planilha.',
+    'Faixa':'Faixa de cobertura em que o item cai (0-30, 31-60, 61-90, 91-120, 121+).',
+    'Tipo':'No 121+, distingue “sem giro” (estoque morto, liquidar) de “excesso real” (cobertura alta, reduzir compra).',
+  },
+  estoque_zero:{
+    _title:'Todos os produtos com estoque gerencial ≤ 0, com e sem pedido de compra em aberto.',
+    'Estoque':'Estoque disponível (gerencial) em unidades — aqui, sempre ≤ 0.',
+    'Dias s/ venda':'Dias desde a última venda (“nunca” = sem saída registrada).',
+    'Status':'Situação executiva: ruptura sem pedido, ruptura com pedido parcial/coberto, etc.',
+  },
+  reposicao:{
+    _title:'Sugestão de compra agrupada por fornecedor. Sugestão = estoque-alvo − (disponível + pedido já em aberto), arredondada em caixas.',
+    'Embalagem':'Embalagem da caixa e o fator de conversão unidade↔caixa (un/cx).',
+    'Cob.proj':'Cobertura projetada em dias = (disponível + já pedido) ÷ giro diário.',
+    'm³':'Cubagem do pedido sugerido (caixas sugeridas × volume da caixa).',
+    'Valor sug.':'Valor da compra sugerida a custo (caixas sugeridas × custo).',
+    'Status':'Situação executiva do item (compra urgente, no prazo, ruptura, pedido cobre…).',
+    'Sugeria':'Quanto a regra sugeriria comprar — mostrado só para conferência (o item parou de vender).',
+    'Dias s/ venda':'Dias desde a última venda do produto.',
+  },
+  plano:{
+    'Qtd pedir':'Quantidade a liberar naquela semana (em caixas quando há fator de caixa).',
+    'Valor':'Valor da liberação a custo.',
+  },
+  orcamento:{
+    'Meta':'Meta do comprador = 65% da sua venda líquida dos últimos 30 dias.',
+    'Comprado':'Total comprado no mês (pedidos reais do Winthor).',
+    'Aberto':'Valor comprometido ainda não entregue.',
+    'Saldo':'Meta − comprado.',
+    'Consumido':'% da meta já consumida (comprado ÷ meta).',
+    'A entregar':'Valor do pedido ainda não recebido.',
+    'Previsão entrega':'Data prevista de entrega (previsão do Winthor, ou emissão + prazo do fornecedor).',
+    'Status':'Situação do prazo: no prazo, chega em ≤7 dias, atrasado ou já recebido.',
+    'Valor':'Valor total do pedido.',
+  },
+  parado:{
+    _title:'Itens com estoque e 15 dias ou mais sem venda, por faixa de dias parados. As faixas somam o total.',
+    'Última venda':'Data da última saída do produto.',
+    'Dias parado':'Dias desde a última venda (“nunca” = sem saída registrada).',
+    'Valor':'Valor do estoque parado a custo.',
+    'Saída':'Recência da última saída: recente (≤30d), média (≤90d) ou antiga (>90d).',
+    'Faixa':'Faixa de dias sem venda em que o item cai.',
+    'Ação':'Plano de ação cadastrado para o item (clique para criar ou editar).',
+  },
+  validade:{
+    _title:'Lotes que vencem no horizonte, com saldo projetado e risco (FEFO: sai primeiro o que vence antes).',
+    'Lote':'Número do lote (ou “N lotes” quando vários do mesmo produto/validade foram somados).',
+    'Dias':'Dias até a data de validade do lote.',
+    'Saldo proj.':'Saldo projetado no vencimento = quantidade − consumo estimado (giro × dias até vencer).',
+    'Valor risco':'Valor do saldo que deve sobrar no vencimento, a custo — o risco de perda.',
+    'Classe':'Urgência pela proximidade do vencimento: crítico (≤7d), atenção (≤15d) ou planejar.',
+    'Ação':'Plano de ação cadastrado para o lote.',
+    'Estoque':'Valor do estoque desses lotes a custo (quantidade × custo).',
+    'Risco':'Valor em risco de vencer (saldo projetado × custo).',
+  },
+  vencidos:{
+    _title:'Perda REALIZADA por validade (conta 200042 do Winthor), mês a mês. Contraponto da aba Validade (lá é risco futuro; aqui é perda que já aconteceu).',
+    'Vezes':'Quantas vezes o produto já venceu (reincidência ao longo de todo o histórico).',
+    'Qt perdida':'Quantidade total já baixada por validade.',
+    'Já perdido':'Valor total já perdido por validade (ao preço da baixa).',
+    'Em estoque':'Saldo atual do produto — o que ainda pode vencer de novo.',
+    'Próx. venc.':'Data em que o estoque atual endereçado vence (menor validade futura).',
+    'Última perda':'Data da última baixa por validade do produto.',
+    'P. unit.':'Preço unitário registrado na baixa da nota.',
+    'Total':'Valor total da linha (quantidade × preço unitário).',
+    'Part.':'Participação da perda desse comprador/fornecedor no total do período.',
+    '% venda':'Perda por validade ÷ venda líquida do comprador (all-time; aparece só em “Tudo”).',
+  },
+  ruptura_comprador:{
+    _title:'Ruptura (estoque ≤ 0 e giro > 0) agregada por comprador: itens sem pedido, venda perdida e custo de reposição.',
+    'Em ruptura':'Nº de itens do comprador em ruptura (estoque ≤ 0 e giro > 0).',
+    '% Rupt.':'Itens em ruptura ÷ total de produtos do comprador.',
+    'Dias rupt. méd':'Média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados).',
+    'Sem pedido':'Itens em ruptura ainda sem pedido de compra em aberto (risco real).',
+    '% s/ ped.':'Itens sem pedido ÷ total de produtos do comprador (base da meta — todo item conta, não só os em ruptura).',
+    'Venda perdida':'Dias em ruptura (desde a última venda, teto 60) × giro/dia × preço de venda (realizado 3m).',
+    'Custo reposição':'Sugestão de compra × custo — o que falta comprar até o alvo.',
+  },
+  ocupacao:{
+    _title:'Ocupação das posições do depósito segundo o WMS (bate com a consulta 1772 do Winthor).',
+    'Posições':'Nº de posições (slots) COM estoque ocupadas pelo item.',
+    '% ocup.':'Participação do item nas posições com estoque do depósito.',
+    'm³ end.':'Volume endereçado do item (quantidade endereçada × volume unitário).',
+    'Qtd (sist.)':'Quantidade que o sistema (WMS) mostra na posição — para comparar com a prateleira.',
+    'Situação':'Situação da posição: com estoque ou vazia (reservada).',
+  },
+  desempenho:{
+    'Fornec.':'Nº de fornecedores atendidos pelo comprador.',
+    'Positivação':'Nº de clientes distintos que compraram (positivaram) no período.',
+    'Venda líq.':'Venda líquida = venda bruta − devoluções.',
+    'Lucro bruto':'Venda líquida − custo (com o custo da mercadoria devolvida estornado).',
+    'Devolução':'Valor devolvido no período.',
+    '% Lucro':'Fatia do lucro total (participação do comprador).',
+    'AA Venda':'Variação da venda vs. o mesmo período do ano anterior.',
+    'AA Lucro':'Variação do lucro vs. o mesmo período do ano anterior.',
+  },
+  comprasvendas:{
+    'Estoque R$':'Valor do estoque a custo (capital em compras).',
+    'Venda R$':'Venda líquida no período (venda − devoluções).',
+    'Lucro R$':'Venda líquida − custo.',
+    'Venda/Estoque':'Quantas vezes o capital girou no período (venda ÷ estoque).',
+    'Ruptura':'Nº de itens em ruptura (estoque ≤ 0 e giro > 0).',
+    '% Rupt.':'Itens em ruptura ÷ total de itens do grupo.',
+    'Parado R$':'Valor de estoque parado a custo.',
+  },
+  fornecedores:{
+    _title:'Compara quanto o fornecedor vende com quanto pesa em estoque.',
+    'ABC':'Curva do fornecedor por venda (Pareto do faturamento).',
+    'Estoque':'Valor do estoque do fornecedor a custo.',
+    'Giro/mês':'Giro mensal somado dos itens do fornecedor (unidades).',
+    'Cob.':'Cobertura média do fornecedor em dias (disponível ÷ giro diário).',
+    'Venda':'Venda líquida do fornecedor no período.',
+    '% est.':'Participação do fornecedor no valor total de estoque.',
+    '% venda':'Participação do fornecedor na venda total.',
+    'Índice':'% na venda ÷ % no estoque (> 1 = vende mais do que pesa em estoque).',
+    'Classe':'Classificação: alta performance, equilibrado, estoque alto, ruptura ou crítico sem giro.',
+  },
+  produtos:{
+    _title:'Tabela completa de produtos com todos os indicadores. Filtre por abastecimento e por margem.',
+    'Avaria':'Quantidade bloqueada/avariada (QTBLOQUEADA) — não entra no disponível para venda.',
+    'Dias s/v':'Dias desde a última venda.',
+    'Abast.':'Status de abastecimento: urgente, alta, atenção, OK, excesso ou sem giro.',
+  },
+  qualidade:{
+    'Estoque':'Estoque disponível (gerencial) em unidades.',
+    'Custo':'Custo unitário do produto (CUSTOFIN).',
+    'Problemas':'Inconsistências detectadas: sem custo, sem fornecedor, sem comprador, sem giro com estoque ou estoque negativo.',
+  },
+};
+// span do ícone ⓘ com o texto no data-tip (a caixinha singleton lê daí no hover)
+function tipSpan(txt){ return txt ? `<span class="ttip" data-tip="${esc(txt)}" tabindex="0" aria-label="ajuda" role="img">i</span>` : ''; }
+// tooltip de coluna/título pelo registro (view + rótulo). Sobrescrita da view vence a COMMON.
+function tip(view, label){ const v=(TIPS[view]&&TIPS[view][label]); const t=(v!=null?v:TIPS.COMMON[label]); return tipSpan(t); }
+// tooltip com texto literal (títulos escritos à mão)
+function tipT(txt){ return tipSpan(txt); }
+
 /* ───────── prefs ───────── */
 function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view})); }catch(e){} }
 function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(PREF))||{}; }catch(e){ return {}; } }
@@ -168,7 +328,7 @@ function renderTable(P,cols,view,onClickRow){
   const sk=S.sort[view]||{key:cols[0].key,dir:-1};
   const rows=[...P].sort((a,b)=>{let x=a[sk.key],y=b[sk.key]; if(x==null)x=-Infinity; if(y==null)y=-Infinity;
     if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y)); return sk.dir*(x-y);});
-  const head=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${sk.key===c.key?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
+  const head=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${tip(view,c.label)}${sk.key===c.key?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
   const body=rows.slice(0,400).map(p=>`<tr data-cod="${p.codprod}">`+cols.map(c=>{
     let v=p[c.key]; if(c.badge)return`<td>${badge(v,c.map?c.map(v,p):v)}</td>`;
     if(c.html)return`<td class="${c.num?'num':''}">${c.html(p)}</td>`;
@@ -188,7 +348,7 @@ const colGiroSpark={key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${int(p.g
 // ── ordenação clicável p/ tabelas montadas na mão (headers com data-k) ──
 function _sortArr(rows,sk){ return [...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
   if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y)); return sk.dir*(x-y);}); }
-function sortTh(cols,sk){ return cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join(''); }
+function sortTh(cols,sk,view){ view=view||S.view; return cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join(''); }
 function wireSortTbl(container,skKey,onChange){ if(!container)return; container.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skKey]||{};S.sort[skKey]={key:k,dir:cur.key===k?-cur.dir:-1};onChange();}); }
 
 function exportQS(){
@@ -213,7 +373,7 @@ function exportQS(){
   return p.toString();
 }
 function exportBtns(view){ const qs=exportQS(); return `<span class="exp"><a class="btn sm" href="/api/export/${view}.xlsx?${qs}">⬇ Excel</a><a class="btn sm" href="/api/export/${view}.pdf?${qs}">⬇ PDF</a></span>`; }
-function head(title,view){ return `<h2 class="section"><span>${title}</span>${view?exportBtns(view):''}</h2>`; }
+function head(title,view){ return `<h2 class="section"><span>${title}${view?tip(view,'_title'):''}</span>${view?exportBtns(view):''}</h2>`; }
 
 /* ───────── VIEWS ───────── */
 function kpi(l,v,sub,dot){ return `<div class="card kpi"><div class="k-label">${dot?`<span class="dot" style="background:${dot}"></span>`:''}${l}</div><div class="k-value">${v}</div>${sub?`<div class="k-sub">${sub}</div>`:''}</div>`; }
@@ -236,7 +396,7 @@ function renderCockpit(P){
      ${kpi('A comprar',int(k.repor.n),'sug. '+moneyK(k.repor.valor),C.orange)}
      ${kpi('Capital parado',moneyK(k.valor_parado),dec(k.valor_total?k.valor_parado/k.valor_total*100:0,1)+'% do estoque',C.purple)}
    </div>
-   <h2 class="section"><span>Alertas de ação</span></h2>
+   <h2 class="section"><span>Alertas de ação${tipT('Ações prioritárias do dia — rupturas, cobertura crítica, compras a fazer, vencimentos e estoque parado. Clique num card para ir direto à aba.')}</span></h2>
    <div class="alerts">
      ${alertCard(k.ruptura.zerados,'Em ruptura (estoque ≤ 0)',k.ruptura.valor_zerados,C.red,'estoque_zero',{})}
      ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{cobFaixa:'0-30'})}
@@ -245,7 +405,7 @@ function renderCockpit(P){
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
    </div>
    <div class="row">
-     <div class="panel grow"><h3>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'}) <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3>
+     <div class="panel grow"><h3><span>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'})${tipT('Classificação de Pareto por venda (ou por valor de estoque): A ≈ 80% do total, B ≈ 15%, C o restante. Alterne a base no botão.')}</span> <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3>
        <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
          <div class="chart-box sm" style="height:190px;flex:2 1 300px;min-width:0"><canvas id="ch-abc"></canvas></div>
          <div style="flex:1 1 240px;min-width:220px">
@@ -266,8 +426,8 @@ function renderCockpit(P){
      </div>
    </div>
    <div class="row">
-     <div class="panel grow"><h3>Maiores ofensores — capital parado</h3><div id="cp-parado"></div></div>
-     <div class="panel grow"><h3>Maiores ofensores — risco de vencimento</h3><div id="cp-venc"></div></div>
+     <div class="panel grow"><h3><span>Maiores ofensores — capital parado${tipT('Os produtos com mais dinheiro parado (estoque sem giro ou sem venda recente).')}</span></h3><div id="cp-parado"></div></div>
+     <div class="panel grow"><h3><span>Maiores ofensores — risco de vencimento${tipT('Os produtos com maior valor em risco de perder a validade no horizonte configurado.')}</span></h3><div id="cp-venc"></div></div>
    </div>`;
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   // rosca de participação dos itens por curva (quantidade) — cores fixas A/B/C (verde/azul/cinza), borda = surface p/ respiro
@@ -322,7 +482,7 @@ function renderRuptura(P){
   const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
   el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
-    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)',faixas,P,p=>p.valor,cf,'ch-cob')+
+    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)'+tipT('Valor de estoque em cada faixa de cobertura. Clique numa faixa para filtrar a tabela.'),faixas,P,p=>p.valor,cf,'ch-cob')+
     `<div class="row" style="gap:14px;margin-bottom:4px">
        <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
          <details class="ms" id="cob-faixa"><summary class="fb-control" style="width:auto">${cobFaixaLabel(cf)}</summary>
@@ -404,11 +564,11 @@ function renderQualidade(P){
     <div class="k-label"><span class="dot" style="background:${C[QUAL_CHK[k].cor]}"></span>${QUAL_CHK[k].lbl}</div>
     <div class="k-value">${int(counts[k])}</div></div>`;
   const qqs=exportQS()+(cat?'&cat='+encodeURIComponent(cat):'');
-  $('#v-qualidade').innerHTML=head('Qualidade da base — produtos com cadastro/saldo inconsistente')+
+  $('#v-qualidade').innerHTML=head('Qualidade da base — produtos com cadastro/saldo inconsistente'+tipT('Produtos com cadastro ou saldo inconsistente. Corrigir na origem (Winthor) melhora todas as telas.'))+
     `<div style="display:flex;gap:8px;margin:0 0 10px"><a class="btn sm" href="/api/export/qualidade.xlsx?${qqs}">⬇ Excel</a><a class="btn sm" href="/api/export/qualidade.pdf?${qqs}">⬇ PDF</a></div>
      <div class="kpi-grid">${keys.map(card).join('')}</div>
      <div class="count-line">${int(flagged.length)} produtos${cat?` na categoria <b>${QUAL_CHK[cat].lbl}</b> · <a href="#" id="qual-clear">limpar</a>`:' com ao menos um problema'}. Corrigir na origem (Winthor) melhora todas as telas.</div>
-     <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th><th class="num">Estoque</th><th class="num">Custo</th><th class="num">Giro/mês</th><th>Problemas</th></tr></thead>
+     <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th><th class="num">Estoque${tip('qualidade','Estoque')}</th><th class="num">Custo${tip('qualidade','Custo')}</th><th class="num">Giro/mês${tip('qualidade','Giro/mês')}</th><th>Problemas${tip('qualidade','Problemas')}</th></tr></thead>
      <tbody>${flagged.slice(0,400).map(({p,probs})=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.custo_unit?money(p.custo_unit):'—'}</td><td class="num">${int(p.giro_mes)}</td><td>${probs.map(badge1).join(' ')}</td></tr>`).join('')}</tbody></table>
      ${flagged.length>400?`<div class="count-line">Mostrando 400 de ${int(flagged.length)}.</div>`:''}</div>`;
   const el=$('#v-qualidade');
@@ -432,13 +592,13 @@ function renderReposicao(P){
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
           <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem</th><th class="num">Disp.</th><th class="num">Já ped.</th><th class="num">Cob.proj</th><th class="num">Giro/mês</th><th class="num">Sugerido (cx)</th><th class="num">m³</th><th class="num">Valor sug.</th><th>Status</th></tr></thead>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
-      <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})</span></h3>
+      <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span></h3>
       <div class="count-line">Têm giro na média de 3 meses, mas <b>sem venda há ≥60 dias</b> → a sugestão pode estar comprando estoque que travou. Confira antes de pedir.</div>
-      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.</th><th class="num">Dias s/ venda</th><th class="num">Giro/mês</th><th class="num">Sugeria</th></tr></thead>
+      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Dias s/ venda${tip('reposicao','Dias s/ venda')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugeria${tip('reposicao','Sugeria')}</th></tr></thead>
       <tbody>${suspensos.slice(0,100).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.dias_sem_venda==null?'—':int(p.dias_sem_venda)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td></tr>`).join('')}</tbody></table></div>
     </div>`:'');
   el.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact'))openProduto(tr.dataset.cod);});
@@ -460,7 +620,7 @@ async function renderPlano(){
   const fonteLbl=S.params.sazonal?'forecast sazonal (RCA, 24m)':(S.params.forecast?`forecast (RCA, ${S.params.fcmeses}m)`:'média 3m (oficial)');
   const totAgora=(buckets[0]||[]).reduce((s,x)=>s+(x.valor||0),0);
   const totFuturo=semanas.filter(w=>w>0).reduce((s,w)=>s+buckets[w].reduce((a,x)=>a+(x.valor||0),0),0);
-  let html=`<h2 class="section"><span>Plano de reposição no tempo</span></h2>
+  let html=`<h2 class="section"><span>Plano de reposição no tempo${tipT('Projeção do saldo semana a semana e QUANDO cada pedido precisa sair (recebimento − lead time). Sem trânsito no BI, todo reabastecimento é planejado.')}</span></h2>
     <div class="count-line">Saldo projetado semana a semana (demanda = giro/dia · ${fonteLbl}). Mostra <b>quando o pedido precisa sair</b> = recebimento − lead time. Sem dados de trânsito no BI → todo reabastecimento é planejado.</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
       ${kpi('Liberar agora (esta semana)',money(totAgora),int((buckets[0]||[]).length)+' itens',C.orange)}
@@ -476,7 +636,7 @@ async function renderPlano(){
     const titulo=w===0?'⚡ Sair agora (esta semana)':`Semana +${w} · a partir de ${dataLbl}`;
     return `<div class="panel forn-grp">
       <h3><span>${titulo} <small class="muted">· ${lib.length} itens</small></span><span>${money(tot)}</span></h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.</th><th class="num">Cob.</th><th class="num">Giro/mês</th><th class="num">Qtd pedir</th><th class="num">Valor</th></tr></thead>
+      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.${tip('plano','Disp.')}</th><th class="num">Cob.${tip('plano','Cob.')}</th><th class="num">Giro/mês${tip('plano','Giro/mês')}</th><th class="num">Qtd pedir${tip('plano','Qtd pedir')}</th><th class="num">Valor${tip('plano','Valor')}</th></tr></thead>
       <tbody>${lib.map(x=>`<tr data-cod="${x.codprod}"><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao)}</span></td><td><span class="prod">${esc(x.fornecedor||'—')}</span></td><td class="num">${int(x.qtdisp)}</td><td class="num">${cob(x.cobertura)}</td><td class="num">${int(x.giro_mes)}</td><td class="num">${sugCx(x.qt,x.qtunitcx)}</td><td class="num">${money(x.valor)}</td></tr>`).join('')}</tbody></table></div>
     </div>`;
   }).join('');
@@ -510,13 +670,13 @@ function renderValidade(){
   const cg={}; Lf.forEach(l=>{const nome=l.comprador||'Sem comprador';const g=cg[nome]=cg[nome]||{nome,bruto:0,risco:0,n:0};
     g.bruto+=(l.qt||0)*(l.custo_unit||0); g.risco+=(l.valor_risco||0); g.n++;});
   const compRows=Object.values(cg).sort((a,b)=>b.bruto-a.bruto);
-  const compTbl=`<h3>Vencimento por comprador</h3>
-    <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Estoque</th><th class="num">Risco</th><th class="num">Lotes</th></tr></thead>
+  const compTbl=`<h3><span>Vencimento por comprador${tipT('Valor de estoque e valor em risco de vencimento, por comprador.')}</span></h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Estoque${tip('validade','Estoque')}</th><th class="num">Risco${tip('validade','Risco')}</th><th class="num">Lotes</th></tr></thead>
     <tbody>${compRows.map(g=>{const cod=compMap[g.nome],sel=cod!=null&&String(cod)===S.cli.comprador;
       return `<tr data-comp="${cod!=null?cod:''}" style="${cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}"><td><span class="prod">${esc(g.nome)}</span></td><td class="num">${money(g.bruto)}</td><td class="num">${moneyK(g.risco)}</td><td class="num">${int(g.n)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table></div>`;
   const el=$('#v-validade');
   el.innerHTML=head(`Validade / FEFO — próximos ${S.params.hor} dias`,'validade')
-    +`<div class="panel"><h3>Por faixa de validade <small class="muted">· estoque parado vs. risco · clique p/ filtrar</small></h3>
+    +`<div class="panel"><h3><span>Por faixa de validade${tipT('Lotes por dias até vencer — separa estoque parado de risco real. Clique para filtrar.')}</span> <small class="muted">· estoque parado vs. risco · clique p/ filtrar</small></h3>
         <div class="vfx-row">${cards}</div>
         <div class="row" style="align-items:flex-start">
           <div style="flex:0 0 340px;max-width:340px"><div class="chart-box sm" style="height:170px"><canvas id="ch-val"></canvas></div></div>
@@ -600,7 +760,7 @@ async function renderVencidos(){
         ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
         ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos · histórico`,C.purple)}
       </div>
-      <div class="panel"><h3>Por mês <small class="muted">· clique num mês p/ filtrar o detalhe</small></h3>
+      <div class="panel"><h3><span>Por mês${tipT('Perda por validade em cada mês. Clique num mês para filtrar o detalhe abaixo.')}</span> <small class="muted">· clique num mês p/ filtrar o detalhe</small></h3>
         <div class="row" style="align-items:flex-start">
           <div class="grow"><div class="chart-box sm" style="height:190px"><canvas id="ch-ven"></canvas></div></div>
           <div style="flex:0 0 300px;max-width:300px" id="ven-meses"></div>
@@ -638,7 +798,7 @@ async function renderVencidos(){
     const d=Math.round((new Date(p.prox_venc+'T00:00:00')-new Date(new Date().toDateString()))/864e5);
     const c=d<=30?C.red:(d<=60?C.orange:'');
     return `<td class="num" style="${c?`color:${c};font-weight:600`:''}">${dt(p.prox_venc)} <small class="muted">${d}d</small></td>`;};
-  $('#ven-estoque').innerHTML=`<h3>⚠️ Já venceu e ainda está em estoque
+  $('#ven-estoque').innerHTML=`<h3><span>⚠️ Já venceu e ainda está em estoque${tipT('Produtos que já geraram perda e ainda têm saldo — risco de vencer de novo. Usa o histórico completo (ignora o filtro de mês).')}</span>
       <small class="muted">· risco de vencer de novo · ${S.venMes
         ? `<b>histórico completo — não filtra por ${mesLbl(S.venMes)}</b>`
         : 'considera todo o histórico, independe do mês'}</small></h3>`
@@ -661,9 +821,9 @@ async function renderVencidos(){
   // attr: 'data-comp' (comprador) ou 'data-forn' (fornecedor) — ambos clicáveis p/ filtrar
   const rank=(arr,titulo,attr,selCod,pctMap)=>{const t=arr.reduce((s,g)=>s+(g.valor||0),0);
     const pcol=!!pctMap, semMes=!S.venMes&&!ff&&perTudo;   // % venda é all-time do comprador: só em "Tudo", sem filtro de mês/fornecedor
-    return `<h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
+    return `<h3><span>${titulo}${tipT('Ranking da perda por validade. Clique para filtrar.')}</span> <small class="muted">· clique p/ filtrar</small></h3>
       <div class="tbl-wrap" style="max-height:280px;overflow:auto"><table>
-      <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">Part.</th>${pcol?'<th class="num">% venda</th>':''}<th class="num">Itens</th></tr></thead>
+      <thead><tr><th>Nome</th><th class="num">Valor</th><th class="num">Part.${tip('vencidos','Part.')}</th>${pcol?`<th class="num">% venda${tip('vencidos','% venda')}</th>`:''}<th class="num">Itens</th></tr></thead>
       <tbody>${arr.slice(0,15).map(g=>{const sel=g.cod!=null&&String(g.cod)===selCod;
         const pv=pcol&&semMes?pctMap[String(g.cod)]:null;
         return `<tr ${attr}="${g.cod!=null?g.cod:''}" style="${g.cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}">
@@ -688,7 +848,7 @@ async function renderVencidos(){
     {k:'fornecedor',label:'Fornecedor'},{k:'codprod',label:'Cód',num:1},{k:'descricao',label:'Produto'},
     {k:'qt',label:'Qt',num:1},{k:'punit',label:'P. unit.',num:1},{k:'total',label:'Total',num:1},{k:'comprador',label:'Comprador'}];
   const dsk=S.sort['vencidos']||{key:'dtsaida',dir:-1};
-  $('#ven-tbl').innerHTML=`<h3>Detalhe${S.venMes?` — ${mesLbl(S.venMes)}`:''}
+  $('#ven-tbl').innerHTML=`<h3><span>Detalhe${S.venMes?` — ${mesLbl(S.venMes)}`:''}${tipT('Itens das notas de baixa por validade (espelha a planilha VENCIDOS do diretor).')}</span>
       ${S.venMes?`<small class="muted">· <a href="#" id="ven-clear">limpar filtro do mês</a></small>`:''}</h3>
     <div class="count-line">${int(itens.length)} itens · ${money(tot('total'))}${itens.length>300?' (mostrando 300)':''}</div>
     <div class="tbl-wrap"><table><thead><tr>${sortTh(dcols,dsk)}</tr></thead><tbody>${
@@ -728,7 +888,7 @@ async function renderVencidos(){
 function renderTableInline(P,cols,view){ // tabela sem o wrapper de section (usada dentro de painel)
   const sk=S.sort[view]||{key:'dias_para_vencer',dir:1};
   const rows=[...P].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=Infinity;if(y==null)y=Infinity;if(typeof x==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
-  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${sk.key===c.key?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
+  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${tip(view,c.label)}${sk.key===c.key?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
   const body=rows.slice(0,300).map(p=>`<tr data-cod="${p.codprod}">`+cols.map(c=>{let v=p[c.key];if(c.badge)return`<td>${badge(v,c.map?c.map(v):v)}</td>`;if(c.html)return`<td>${c.html(p)}</td>`;if(c.fmt)v=c.fmt(v,p);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
   setTimeout(()=>{const cont=$('#val-tbl');if(!cont)return;
     cont.querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[view]||{};S.sort[view]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
@@ -754,7 +914,7 @@ function resumoFaixasBlock(titulo,faixas,items,valorFn,active,chartId){
   const cards=faixas.map(f=>`<div class="vfx ${(Array.isArray(active)?active.includes(f.key):f.key===active)?'on':''}" data-fkey="${f.key}" style="--c:${f.color}">
       <div class="vfx-h">${f.label}</div><div class="vfx-v">${money(f.valor)}</div>
       <div class="vfx-s">${int(f.qt)} itens</div></div>`).join('');
-  return `<div class="panel"><h3>${titulo} <small class="muted">· clique p/ filtrar</small></h3>
+  return `<div class="panel"><h3><span>${titulo}</span> <small class="muted">· clique p/ filtrar</small></h3>
       <div class="vfx-row">${cards}</div>
       <div class="row" style="align-items:flex-start">
         <div style="flex:0 0 340px;max-width:340px"><div class="chart-box sm" style="height:170px"><canvas id="${chartId}"></canvas></div></div>
@@ -800,7 +960,7 @@ function renderParado(P){
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)',faixas,universo,p=>p.valor,pf,'ch-parado')
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT('Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar.'),faixas,universo,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
           <details class="ms" id="par-faixa"><summary class="fb-control" style="width:auto">${parFaixaLabel(pf)}</summary>
@@ -851,11 +1011,11 @@ function renderABCXYZ(P){
     <div class="ri"><span>Zona vermelha (CY+CZ) — candidatos a sair</span><b style="color:var(--red)">${moneyK(redV)} · ${int(redQ)} itens</b></div>
     <div class="ri"><span>AZ — alto valor, demanda errática (risco de ruptura)</span><b style="color:var(--yellow)">${int(az.qt)} itens · ${moneyK(az.venda)}</b></div>
     <div class="ri"><span>Curva C: ${dec(cT.qt/totQt*100,0)}% dos itens, só ${dec(cT.venda/totVenda*100,0)}% da venda</span><b>${int(cT.qt)} itens</b></div></div>`;
-  $('#v-abcxyz').innerHTML=`<h2 class="section"><span>Matriz ABC-XYZ</span></h2>
+  $('#v-abcxyz').innerHTML=`<h2 class="section"><span>Matriz ABC-XYZ${tipT('Curva de vendas (ABC) × variabilidade da demanda (XYZ). Define a estratégia de reposição de cada item.')}</span></h2>
     <div class="row">
-      <div class="panel" style="flex:1.7 1 540px"><h3>Curva de vendas (ABC) × Variabilidade da demanda (XYZ)</h3>${g}
+      <div class="panel" style="flex:1.7 1 540px"><h3><span>Curva de vendas (ABC) × Variabilidade da demanda (XYZ)${tipT('Cada célula = itens naquela combinação; a cor é a zona de ação. Clique numa célula para listar os produtos.')}</span></h3>${g}
         <div class="count-line" style="margin-top:14px">Cor = zona de ação · número = itens · valor = <b>venda</b> do período · % = fatia da venda. Clique numa célula para listar os produtos.</div></div>
-      <div class="panel grow" style="flex:1 1 300px"><h3>Estratégia por zona</h3>${leg}
+      <div class="panel grow" style="flex:1 1 300px"><h3><span>Estratégia por zona${tipT('O que fazer em cada zona: automatizar (nunca faltar), monitorar (estoque de segurança) ou tirar de linha.')}</span></h3>${leg}
         <h3 style="margin-top:18px">Leitura</h3>${read}</div>
     </div>`;
   $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=[k[0]];S.cli.xyz=k[1];syncCurvaUI();$('#f-xyz').value=k[1];goView('produtos',{});});
@@ -888,7 +1048,7 @@ function renderFornecedores(P){
   const Ff=S.cli.fornClasse?Fabc.filter(r=>r.cl===S.cli.fornClasse):Fabc;
   const sk=S.sort['fornecedores']||{key:'valor',dir:-1};
   const rows=[...Ff].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(typeof x==='string')return sk.dir*x.localeCompare(y);return sk.dir*((x||0)-(y||0));});
-  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}</th>`).join('');
+  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${tip('fornecedores',c.label)}</th>`).join('');
   const body=rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>{let v=r[c.key];if(c.badge)return`<td>${badge(v)}</td>`;if(c.fmt)v=c.fmt(v);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
   $('#v-fornecedores').innerHTML=head('Desempenho por fornecedor — giro × estoque','fornecedores')+
     `<div class="fb-group" style="margin:0 0 6px"><label>Filtrar classe</label>
@@ -920,7 +1080,7 @@ function renderRupturaComprador(P){
     const ck=[{k:'nome',label:lbl0},...ckBase];
     const T=rows.reduce((s,r)=>({n:s.n+r.n,rupt:s.rupt+r.rupt,semped:s.semped+r.semped,perdida:s.perdida+r.perdida,repor:s.repor+r.repor,diasSum:s.diasSum+r.diasSum,diasN:s.diasN+r.diasN}),{n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0});
     const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(T.n)}</td><td class="num">${int(T.rupt)}</td><td class="num">${T.n?dec(T.rupt/T.n*100,1):'0'}%</td><td class="num">${T.diasN?int(Math.round(T.diasSum/T.diasN))+'d':'—'}</td><td class="num">${int(T.semped)}</td><td class="num">${T.n?dec(T.semped/T.n*100,1):'0'}%</td><td class="num">${money(T.perdida)}</td><td class="num">${money(T.repor)}</td></tr>`:'';
-    return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
+    return `<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(S.view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(r=>`<tr${nav?` data-curva="${esc(r.k)}" style="cursor:pointer"`:''}><td><span class="prod">${esc(r.nome)}</span></td><td class="num">${int(r.n)}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct,1)}%</td><td class="num">${r.diasrup?int(r.diasrup)+'d':'—'}</td><td class="num">${int(r.semped)}</td><td class="num">${dec(r.pctSemPed,1)}%</td><td class="num">${money(r.perdida)}</td><td class="num">${money(r.repor)}</td></tr>`).join('')||'<tr><td colspan="9" class="muted">Sem ruptura 🎉</td></tr>'}${totRow}</tbody></table></div>`;
   }
   const porComp=agrupa(p=>p.codcomprador==null?0:p.codcomprador, p=>p.comprador||'Sem comprador');
@@ -1000,7 +1160,7 @@ async function renderDesempenho(){
     if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y));return sk.dir*(x-y);});
   const yoyCell=v=>v==null?'<span class="muted">—</span>':`<span style="color:${v>=0?C.green:C.red}">${v>=0?'+':''}${dec(v,1)}%</span>`;
   const statCell=v=>{const s=STAT_LUCRO[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
-  el.innerHTML=`<h2 class="section"><span>Desempenho comercial por comprador</span>${exportBtns('desempenho')}</h2>
+  el.innerHTML=`<h2 class="section"><span>Desempenho comercial por comprador${tipT('Venda líquida, lucro, margem, positivação e comparativo ano-a-ano por comprador (dados do RCA).')}</span>${exportBtns('desempenho')}</h2>
     <div class="count-line">Receita/lucro/positivação dos últimos <b>${perLbl}</b> (venda líquida = bruta − devoluções) · ano×ano = vs. mesmo período do ano anterior. Espelha a aba RECEITA COMPRADOR da planilha.</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
       ${kpi('Venda líquida',money(r.venda_liquida),'',C.green)}
@@ -1008,7 +1168,7 @@ async function renderDesempenho(){
       ${kpi('Margem',r.margem!=null?dec(r.margem,1)+'%':'—','',C.purple)}
       ${kpi('Positivação',int(r.clientes_pos),'clientes distintos',C.accent)}
       ${kpi('Devolução',money(r.devolucao),'',C.red)}</div>
-    <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
+    <div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(S.view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(p=>`<tr><td class="num">${int(p.ranking)}</td><td><span class="prod">${esc(p.comprador)}</span></td><td class="num">${int(p.fornecedores)}</td><td class="num">${int(p.clientes_pos)}</td><td class="num">${money(p.venda_liquida)}</td><td class="num">${money(p.lucro_bruto)}</td><td class="num">${p.margem==null?'—':dec(p.margem,1)+'%'}</td><td class="num">${money(p.devolucao)}</td><td class="num">${dec(p.part_lucro||0,1)}%</td><td class="num">${yoyCell(p.yoy)}</td><td class="num">${yoyCell(p.yoy_lucro)}</td><td>${statCell(p.status_lucro)}</td></tr>`).join('')||'<tr><td colspan="12" class="muted">Sem dados de venda no período.</td></tr>'}</tbody></table></div>
     <div class="count-line">${rows.length} compradores · positivação = clientes distintos atendidos no período (DISTINCTCOUNT cliente).</div>`;
   el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['desempenho']||{};S.sort['desempenho']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
@@ -1019,7 +1179,7 @@ function renderComprasVendas(P){
   const seg=`<div class="seg" id="cv-seg">
     ${['comprador','fornecedor','produto'].map(d=>`<span class="seg-opt ${d===dim?'on':''}" data-d="${d}">${({comprador:'Por comprador',fornecedor:'Por fornecedor',produto:'Por produto'})[d]}</span>`).join('')}</div>`;
   const expv=dim==='comprador'?'compradores':(dim==='fornecedor'?'fornecedores':'comprasvendas');
-  let html=`<h2 class="section"><span>Compras × Vendas — ${({comprador:'por comprador',fornecedor:'por fornecedor',produto:'por produto'})[dim]}</span>${exportBtns(expv)}</h2>
+  let html=`<h2 class="section"><span>Compras × Vendas — ${({comprador:'por comprador',fornecedor:'por fornecedor',produto:'por produto'})[dim]}${tipT('Cruza o capital em estoque (compras) com a venda realizada, por comprador, fornecedor ou produto.')}</span>${exportBtns(expv)}</h2>
     <div class="count-line" style="display:flex;justify-content:space-between;align-items:center">${seg}<span>Estoque = capital em compras · Venda/Lucro/Margem = realizado no período (${({mes:'mês',['90d']:'90d',['6m']:'6m',['12m']:'12m'})[S.vperiodo]})</span></div>`;
   if(dim==='produto'){
     const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'comprador',label:'Comprador',fmt:v=>esc((v||'').split(' ')[0]||'—')},
@@ -1051,7 +1211,7 @@ function renderComprasVendas(P){
     html+=`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
       ${kpi('Estoque (compras)',money(totE),'',C.accent)}${kpi('Venda',money(totV),'',C.green)}
       ${kpi('Lucro',money(totL),'',C.accent2)}${kpi('Margem',totV?dec(totL/totV*100,1)+'%':'—','',C.purple)}</div>`;
-    html+=`<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead><tbody>`+
+    html+=`<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(S.view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead><tbody>`+
       rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td>${dim==='fornecedor'?`<td>${badge(r.curva_abc)}</td>`:''}<td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct_rupt||0,1)}%</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
       `</tbody></table></div><div class="count-line">${rows.length} ${dim==='fornecedor'?'fornecedores':'compradores'} · "Venda/Estoque" = quantas vezes o capital girou no período.</div>`;
     el.innerHTML=html;
@@ -1084,7 +1244,7 @@ async function renderOrcamento(useCache){
   const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}];
   const skM=S.sort['orc_manuais'], manuaisS=skM?_sortArr(manuais,skM):manuais;
   const colsM=[{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'n_pedido',label:'Pedido'},{k:'valor',label:'Valor',num:1}];
-  el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}</span>
+  el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}${tipT('Meta de compras do mês vs. realizado (pedidos reais do Winthor). Verde = dentro; vermelho = estourou.')}</span>
       <span><button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
     <div class="kpi-grid">
       ${kpi('Meta do mês',money(r.meta),r.meta_auto?'65% da venda líq. 30d':'meta manual',C.accent)}
@@ -1094,18 +1254,18 @@ async function renderOrcamento(useCache){
     </div>
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
       <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).</div></div>
-    ${pcS.length?`<div class="panel" id="orc-comp"><h3>Orçamento por comprador <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
+    ${pcS.length?`<div class="panel" id="orc-comp"><h3><span>Orçamento por comprador${tipT('Meta e realizado de cada comprador no mês.')}</span> <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsC,skC||{})}</tr></thead>
       <tbody>${pcS.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
     ${(r.n_atrasados||r.n_chega7)?`<div class="alerts">
       ${r.n_atrasados?alertCard(r.n_atrasados,'Entregas atrasadas',sum2(abertos.filter(p=>p.status_prazo==='atrasado'),'valor_aberto'),C.red,'orcamento',{}):''}
       ${r.n_chega7?alertCard(r.n_chega7,'Chegam em ≤7 dias',sum2(abertos.filter(p=>p.status_prazo==='chega_7'),'valor_aberto'),C.orange,'orcamento',{}):''}
     </div>`:''}
-    <div class="panel" id="orc-abertos"><h3>Acompanhamento de pedidos em aberto <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
+    <div class="panel" id="orc-abertos"><h3><span>Acompanhamento de pedidos em aberto${tipT('Pedidos de compra ainda não recebidos e a previsão de entrega de cada um.')}</span> <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
       ${abertos.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsA,skA||{})}</tr></thead>
       <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>
-    ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3>Pedidos da nossa plataforma <small class="muted">· pendentes de envio ao Winthor</small></h3>
+    ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3><span>Pedidos da nossa plataforma${tipT('Pedidos lançados aqui, pendentes de envio ao Winthor — não somam no realizado até voltarem da base oficial.')}</span> <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
       <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/api/pedidos/${pe.id}.xlsx" title="Planilha de importação do Winthor (cód · preço · qtd)">⬇ Excel</a> <a class="btn sm" href="/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor). <b>⬇ Excel</b> = planilha de importação de pedido do Winthor (v26+): código · preço unitário · quantidade (un).</div></div>`:''}`;
@@ -1120,23 +1280,23 @@ function sum2(arr,key){ key=key||'valor'; return arr.reduce((s,p)=>s+(p[key]||0)
 
 const RESUMO_COR={'URGENTE':'red','ALTO':'orange','ATENCAO':'yellow','BAIXO':'accent','OK':'green','RISCO RUPTURA':'red','CRITICO':'purple'};
 const resumoBadge=s=>{const cor=C[RESUMO_COR[s]||'dim'];return `<span class="badge" style="background:${cor}22;color:${cor}">${s}</span>`;};
-function resumoTabela(titulo,faixas,total,colQt,lblQt){
-  return `<div class="panel grow"><h3>${titulo}</h3>
-    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status</th></tr></thead>
+function resumoTabela(titulo,faixas,total,colQt,lblQt,tipTxt){
+  return `<div class="panel grow"><h3><span>${titulo}${tipT(tipTxt||'')}</span></h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque${tip('gerencial','Valor estoque')}</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status${tip('gerencial','Status')}</th></tr></thead>
     <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
     <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(total[colQt])}</td><td class="num">${money(total.valor)}</td><td class="num">100%</td><td></td></tr></tbody></table></div></div>`;
 }
 // variante da resumoTabela p/ um SUBGRUPO de faixas: calcula o próprio subtotal
 // (itens/valor/%) — usada p/ separar Cobertura de Estoque × Estoque Parado.
-function resumoTabelaGrupo(titulo,faixas,colQt,lblQt){
+function resumoTabelaGrupo(titulo,faixas,colQt,lblQt,tipTxt){
   const tQt=faixas.reduce((s,f)=>s+(f[colQt]||0),0),tVal=faixas.reduce((s,f)=>s+(f.valor||0),0),tPerc=faixas.reduce((s,f)=>s+(f.perc||0),0);
-  return `<div class="panel grow"><h3>${titulo}</h3>
-    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status</th></tr></thead>
+  return `<div class="panel grow"><h3><span>${titulo}${tipT(tipTxt||'')}</span></h3>
+    <div class="tbl-wrap"><table><thead><tr><th>Faixa</th><th class="num">${lblQt}</th><th class="num">Valor estoque${tip('gerencial','Valor estoque')}</th><th class="num">% ${lblQt.toLowerCase()}</th><th>Status${tip('gerencial','Status')}</th></tr></thead>
     <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
     <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(tQt)}</td><td class="num">${money(tVal)}</td><td class="num">${pct(tPerc)}</td><td></td></tr></tbody></table></div></div>`;
 }
-function resumoCard(titulo,rows,cor){
-  return `<div class="panel grow"><h3>${titulo}</h3>
+function resumoCard(titulo,rows,cor,tipTxt){
+  return `<div class="panel grow"><h3><span>${titulo}${tipT(tipTxt||'')}</span></h3>
     <table class="mini">${rows.map(([l,v])=>`<tr><td class="muted">${l}</td><td class="num"><b>${v}</b></td></tr>`).join('')}</table>
     ${cor?`<div class="bar" style="margin-top:8px"><i style="width:0;background:${cor}"></i></div>`:''}</div>`;
 }
@@ -1147,7 +1307,7 @@ async function injectResumos(sel){
   catch(e){ el.innerHTML=`<div class="count-line">Resumos indisponíveis: ${e.message}</div>`; return; }
   const orc=o.orcamento||{}, rup=o.ruptura||{};
   const dentro=(orc.saldo||0)>=0;
-  const cardOrc=resumoCard('Orçamento de compras — comprado × meta',[
+  const cardOrc=resumoCard('Orçamento de compras — comprado × meta'+tipT('Meta do mês = 65% da venda líquida dos últimos 30 dias por comprador. “Comprado” = pedidos reais lançados no Winthor no mês.'),[
     ['Meta de compras (65% venda líq. 30d)',money(orc.meta)],
     ['Comprado no mês (Winthor)',money(orc.comprado)],
     ['% da meta',orc.pct_consumido!=null?pct(orc.pct_consumido):'—'],
@@ -1155,7 +1315,7 @@ async function injectResumos(sel){
     ['Status',dentro?'DENTRO DA META':'FORA DA META'],
     ['Mês competência',orc.mes||'—'],
   ],dentro?C.green:C.red);
-  const cardRup=resumoCard('Ruptura de produtos',[
+  const cardRup=resumoCard('Ruptura de produtos'+tipT('Itens que deveriam ter estoque e não têm: estoque ≤ 0 e giro > 0. “Venda perdida” = o que se deixou de vender no período parado.'),[
     ['Itens em ruptura',int(rup.itens)],
     ['Total de produtos',int(rup.total)],
     ['% ruptura',rup.perc!=null?pct(rup.perc):'—'],
@@ -1166,7 +1326,7 @@ async function injectResumos(sel){
   const ei=o.estoque_ideal||{}, iId=ei.ideal||{}, iRis=ei.em_risco||{}, iSem=ei.sem_giro||{};
   const metaPct=ei.meta_pct||0.90, alerta=!!ei.alerta, corIdeal=alerta?C.red:C.green;
   const idealPanel=`<div class="panel" id="gg-ideal-panel"${alerta?` style="border-color:${C.red}"`:''}>
-      <h3><span>Estoque ideal — cobertura mínima</span>${alerta
+      <h3><span>Estoque ideal — cobertura mínima${tipT('% dos SKUs que giram por faixa de cobertura. Ideal = 46 dias ou mais; risco = até 45. Meta: ≥90% na faixa ideal. “Sem giro” fica à parte e não entra no %.')}</span>${alerta
         ?`<span class="badge" style="background:${C.red}22;color:${C.red}">⚠ abaixo da meta (≥${dec(metaPct*100,0)}%)</span>`
         :`<span class="badge" style="background:${C.green}22;color:${C.green}">✓ dentro da meta</span>`}</h3>
       <div class="row" style="align-items:center">
@@ -1186,14 +1346,14 @@ async function injectResumos(sel){
           <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥46 dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
         </div>
       </div></div>`;
-  el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos</span></h2>
+  el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos${tipT('Visão executiva do estoque: orçamento de compras, ruptura, validade, cobertura e lucro por comprador.')}</span></h2>
     <div class="gg-grid">${cardOrc}${cardRup}</div>
     ${idealPanel}
     <div class="gg-grid">
-      ${resumoTabela('Itens a vencer por faixa de validade',o.validade.faixas,o.validade.total,'itens','Itens')}
+      ${resumoTabela('Itens a vencer por faixa de validade'+tipT('Estoque com validade próxima, agrupado por dias até vencer. Valor = quantidade × custo.'),o.validade.faixas,o.validade.total,'itens','Itens')}
       <div class="gg-col">
-        ${resumoTabelaGrupo('Cobertura de estoque',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return !isNaN(n)&&n<91;}),'produtos','Produtos')}
-        ${resumoTabelaGrupo('Estoque parado',(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return isNaN(n)||n>=91;}),'produtos','Produtos')}
+        ${resumoTabelaGrupo('Cobertura de estoque'+tipT('Nº de produtos por faixa de dias de cobertura (0 a 90 dias). Cobertura = estoque ÷ giro diário.'),(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return !isNaN(n)&&n<91;}),'produtos','Produtos')}
+        ${resumoTabelaGrupo('Estoque parado'+tipT('Produtos com cobertura muito alta ou sem giro (91 dias ou mais) — capital parado.'),(o.cobertura.faixas||[]).filter(f=>{const n=parseInt(f.faixa,10);return isNaN(n)||n>=91;}),'produtos','Produtos')}
       </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
@@ -1207,7 +1367,7 @@ const PAL_COMP=[C.accent,C.green,C.purple,C.orange,C.accent2,C.yellow,C.red,C.di
 function renderGerencial(P){
   const el=$('#v-gerencial');
   el.innerHTML=`<div id="gg-resumos"><div class="count-line">Carregando resumos gerenciais…</div></div>
-    <h2 class="section"><span>Participação de lucro por comprador</span></h2>
+    <h2 class="section"><span>Participação de lucro por comprador${tipT('Lucro (venda líquida − custo) de cada comprador no período; % = fatia do lucro total.')}</span></h2>
     <div class="row"><div class="panel grow">
       <div class="row" style="align-items:center">
         <div style="width:230px"><div class="chart-box sm" style="height:210px"><canvas id="ch-lucrocomp"></canvas></div></div>
@@ -1563,18 +1723,18 @@ async function renderOcupacao(P){
         ${mortoCard}
       </div>
       <div class="row">
-        <div class="panel grow" style="flex:2 1 420px"><h3>Ocupação por RUA <small class="muted">· ${(j.ruas||[]).length} ruas · clique numa rua p/ conferir</small></h3>${ruasHtml(j.ruas||[])}
+        <div class="panel grow" style="flex:2 1 420px"><h3><span>Ocupação por RUA${tipT('% de posições ocupadas em cada rua. Clique numa rua para montar a conferência.')}</span> <small class="muted">· ${(j.ruas||[]).length} ruas · clique numa rua p/ conferir</small></h3>${ruasHtml(j.ruas||[])}
           <div class="count-line">Régua do <b>WMS</b> (exclui bloqueados · inclui RUA 99) — bate com a consulta 1772 do Winthor. Verde = tem espaço · amarelo = enchendo · vermelho = rua lotada.</div></div>
         <div class="grow" style="flex:1 1 240px;display:flex;flex-direction:column;gap:16px;min-width:0">
-          <div class="panel" style="margin:0"><h3>Por tipo de endereço</h3>${tiposHtml(j.tipos||[])}
+          <div class="panel" style="margin:0"><h3><span>Por tipo de endereço${tipT('Picking (face de apanha, no chão) × Pulmão (paletes de armazenagem).')}</span></h3>${tiposHtml(j.tipos||[])}
             <div class="count-line">Picking = face de apanha (chão) · Pulmão = paletes de armazenagem.</div></div>
-          <div class="panel" id="oc-card-vazias" style="margin:0;cursor:pointer" title="Ver a lista das vagas reservadas"><h3>Reservadas vazias 🔒</h3>
+          <div class="panel" id="oc-card-vazias" style="margin:0;cursor:pointer" title="Ver a lista das vagas reservadas"><h3><span>Reservadas vazias 🔒${tipT('Posições que o WMS marca como ocupadas mas estão sem mercadoria.')}</span></h3>
             <div style="font-size:2.2rem;font-weight:800;line-height:1;color:${C.orange};font-family:'JetBrains Mono',monospace">${int(j.vazias_total||0)}</div>
             <div class="count-line" style="margin-top:7px">posições que o WMS diz ocupadas mas <b>sem mercadoria</b> · ${int(j.vazias_com_prod||0)} com produto alocado. <b>Clique p/ ver a lista ↓</b></div></div>
         </div>
       </div>
       ${confPanel(conf)}
-      <div class="panel"><h3>Ocupação por item <small class="muted">· ${int(rows.length)} produtos${S.ocMorto?` · <span style="color:${C.orange}">filtrando espaço morto</span>`:' endereçados'} · clique p/ ver as posições</small></h3>
+      <div class="panel"><h3><span>Ocupação por item${tipT('Posições e volume (m³) ocupados por cada produto endereçado.')}</span> <small class="muted">· ${int(rows.length)} produtos${S.ocMorto?` · <span style="color:${C.orange}">filtrando espaço morto</span>`:' endereçados'} · clique p/ ver as posições</small></h3>
         <div class="count-line">Posições = slots <b>com estoque</b> do item · <b>% ocup.</b> = sobre as ${int(j.com_estoque)} posições com estoque (não o total) · m³ = volume endereçado.</div>
         ${renderTable(rows,cols,'ocupacao')}</div>
       ${vaziasPanel(j)}`;
@@ -1594,7 +1754,7 @@ function vaziasPanel(j){
   const list=S.vazTipo?todas.filter(v=>v.tipo===S.vazTipo):todas;
   const dm={}; (S.produtosAll||[]).forEach(p=>{dm[p.codprod]=p.descricao;});
   const vqs=serverQS()+(S.vazTipo?'&tipo='+encodeURIComponent(S.vazTipo):'');
-  return `<div class="panel" id="oc-vazias"><h3>Posições ocupadas sem estoque — reservadas <small class="muted">· ${int(list.length)} vagas${S.vazTipo?` · só ${esc(S.vazTipo)}`:''} · o que reservou cada uma</small></h3>
+  return `<div class="panel" id="oc-vazias"><h3><span>Posições ocupadas sem estoque — reservadas${tipT('Vagas reservadas sem mercadoria e o produto que reservou cada uma.')}</span> <small class="muted">· ${int(list.length)} vagas${S.vazTipo?` · só ${esc(S.vazTipo)}`:''} · o que reservou cada uma</small></h3>
     <div style="display:flex;gap:8px;margin:6px 0 2px;align-items:center;flex-wrap:wrap"><span class="seg" id="vaz-tipo">${['','Picking','Pulmão'].map(t=>`<span class="seg-opt ${(S.vazTipo||'')===t?'on':''}" data-t="${esc(t)}">${t||'Todos'}</span>`).join('')}</span>
       <a class="btn sm" href="/api/export/vazias.xlsx?${vqs}">⬇ Excel</a>
       <a class="btn sm" href="/api/export/vazias.pdf?${vqs}">⬇ PDF</a></div>
@@ -1620,6 +1780,32 @@ function startProdTitles(){
   new MutationObserver(muts=>{
     for(const m of muts){ if(m.addedNodes.length){ markProdTitles(); break; } }
   }).observe(box, {childList:true, subtree:true});
+}
+// tooltip de ajuda: uma única caixinha fixa no body (não é cortada pelo overflow das tabelas),
+// acionada por delegação no ícone .ttip (gerado dentro do HTML dos cabeçalhos/títulos).
+function setupTips(){
+  if(document.getElementById('tt-pop')) return;
+  const pop=document.createElement('div'); pop.id='tt-pop'; document.body.appendChild(pop);
+  let cur=null;
+  function place(el){
+    const r=el.getBoundingClientRect(), m=8, vw=innerWidth, vh=innerHeight;
+    pop.style.left='0px'; pop.style.top='0px';                 // reset p/ medir a largura real
+    const pw=pop.offsetWidth, ph=pop.offsetHeight;
+    let left=Math.max(m, Math.min(r.left+r.width/2-pw/2, vw-pw-m));
+    let top=r.bottom+6; if(top+ph>vh-m) top=r.top-ph-6;        // sem espaço embaixo → mostra acima
+    pop.style.left=left+'px'; pop.style.top=Math.max(m,top)+'px';
+  }
+  function show(el){ const txt=el.getAttribute('data-tip'); if(!txt) return; cur=el; pop.textContent=txt; pop.classList.add('on'); place(el); }
+  function hide(){ cur=null; pop.classList.remove('on'); }
+  const near=e=>e.target && e.target.closest ? e.target.closest('.ttip') : null;
+  document.addEventListener('mouseover',e=>{ const t=near(e); if(t) show(t); });
+  document.addEventListener('mouseout', e=>{ const t=near(e); if(t&&t===cur) hide(); });
+  document.addEventListener('focusin', e=>{ const t=near(e); if(t) show(t); });
+  document.addEventListener('focusout',e=>{ const t=near(e); if(t&&t===cur) hide(); });
+  // clicar no ⓘ não deve disparar a ordenação da coluna (th.onclick, fase de bolha)
+  document.addEventListener('click',e=>{ if(near(e)){ e.stopPropagation(); e.preventDefault(); } }, true);
+  window.addEventListener('scroll',()=>{ if(cur) hide(); }, true);
+  window.addEventListener('resize',()=>{ if(cur) hide(); });
 }
 // mostra só os tabs do grupo ativo (chamado cedo no boot p/ não piscar todos os tabs no load)
 function applyNav(){
@@ -1710,6 +1896,7 @@ async function init(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
   startProdTitles();   // tooltip da descrição completa na coluna Produto (todas as abas)
+  setupTips();         // tooltip de ajuda (ⓘ) nos títulos e cabeçalhos calculados
   loadData();
 }
 // altura real da topbar+filterbar (ambas sticky) → offset do cabeçalho congelado das tabelas
