@@ -618,7 +618,8 @@ def api_resumos():
     cab = _pedidos_data(filiais, hoje)["cab"]
     venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
-                                 _mes_atual(), comprador, pct=0.65, hoje=hoje, meta_override=None)
+                                 _mes_atual(), comprador, pct=0.65, hoje=hoje, meta_override=None,
+                                 cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
     # filtros ativos que o ORÇAMENTO não consegue honrar (não existe quebra por curva/XYZ/… na
     # meta nem no pedido do Winthor) → o front mostra o aviso no card em vez de exibir % falso
     _rot = {"curva": "curva", "xyz": "XYZ", "fornec": "fornecedor", "depto": "depto", "busca": "busca"}
@@ -1198,7 +1199,8 @@ def api_orcamento():
     venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     # meta sempre automática (65% da venda líquida 30d por comprador) — sem override manual
     res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
-                                 mes, comprador, pct=pct, hoje=hoje, meta_override=None)
+                                 mes, comprador, pct=pct, hoje=hoje, meta_override=None,
+                                 cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
     manuais = store.pedidos_pendentes(mes, comprador) if store.disponivel() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),

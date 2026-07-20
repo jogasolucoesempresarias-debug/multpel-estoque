@@ -876,23 +876,46 @@ def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, 
 
 
 # ───────────────────────── orçamento de compras (pedido real Winthor) ─────────────────────────
+def _cnpj_raiz(v):
+    """8 primeiros dígitos do CNPJ (a 'raiz' da empresa) — filiais compartilham a raiz."""
+    d = "".join(ch for ch in str(v or "") if ch.isdigit())
+    return d[:8] if len(d) >= 8 else ""
+
+
 def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
-                      pct=0.65, hoje=None, meta_override=None, lead_padrao=10):
+                      pct=0.65, hoje=None, meta_override=None, lead_padrao=10,
+                      cnpj_empresa=None):
     """Orçamento de compras a partir do pedido de compra REAL (PCPEDIDO).
     cab: linhas do cabeçalho; venda_comp: {nome_comprador: venda_liq_30d} (p/ a meta);
     comp_map: {matricula:nome}; forn_map: {codfornec: row}; mes: 'YYYY-MM'.
     meta = pct × venda_liq (override manual opcional); realizado = Σ VLTOTAL dos pedidos do mês;
-    aberto = pedidos do mês ainda não recebidos (sem DTENTRADAESTOQUE)."""
+    aberto = pedidos do mês ainda não recebidos (sem DTENTRADAESTOQUE).
+
+    `cnpj_empresa`: CNPJ da própria empresa. Pedido cujo FORNECEDOR tem a **mesma raiz de CNPJ**
+    é **transferência entre filiais**, não compra (o CD abastecendo as lojas) — fica FORA do
+    orçamento (decisão do diretor 07/2026: "não deve contabilizar como compra, pois de fato é
+    transferência"). Compara pela raiz (8 dígitos) p/ pegar qualquer filial da mesma empresa,
+    e não pelo CODFORNEC, que muda. Os excluídos voltam em `transferencias` — sem isso o valor
+    do card cai sem explicação e vira a próxima desconfiança."""
     hoje = hoje or date.today()
     todos = (not comprador or comprador == "TODOS")
+    raiz_empresa = _cnpj_raiz(cnpj_empresa)
     pedidos = []
     realizado = aberto = 0.0
+    tr_n = 0
+    tr_valor = 0.0
     for r in cab:
         nome = comp_map.get(int(_n(r.get("CODCOMPRADOR"))))
         if not todos and nome != comprador:
             continue
         dtem = _parse_dt(r.get("DTEMISSAO"))
         forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
+        # transferência entre filiais: fornecedor é a própria empresa → não é compra
+        if raiz_empresa and _cnpj_raiz((forn or {}).get("CGC")) == raiz_empresa:
+            if bool(dtem) and dtem.strftime("%Y-%m") == mes:
+                tr_n += 1
+                tr_valor += _n(r.get("VLTOTAL"))
+            continue
         vlt = _n(r.get("VLTOTAL"))
         vle = _n(r.get("VLENTREGUE"))            # valor já entregue (DTENTRADAESTOQUE é vazio aqui)
         aberto_val = max(0.0, vlt - vle)
@@ -983,6 +1006,8 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         "n_chega7": sum(1 for p in abertos if p["status_prazo"] == "chega_7"),
         "valor_aberto": _round(sum(p["valor_aberto"] for p in abertos)),
         "meta_auto": meta_override is None,
+        # transferências entre filiais do mês, excluídas do orçamento (front avisa na tela)
+        "transf_n": tr_n, "transf_valor": _round(tr_valor),
     }
     return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos, "por_comprador": por_comprador}
 

@@ -1368,7 +1368,9 @@ async function renderOrcamento(useCache){
       ${kpi('Consumido',r.pct_consumido!=null?pct(r.pct_consumido):'—','',cor)}
     </div>
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
-      <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).</div></div>
+      <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).${
+        // sem este aviso o valor cai e ninguém sabe por quê — vira a próxima desconfiança
+        r.transf_n?` <b style="color:${C.orange}">${int(r.transf_n)} pedido${r.transf_n>1?'s':''} de transferência entre filiais (${money(r.transf_valor)}) não entra${r.transf_n>1?'m':''} no orçamento</b> — fornecedor é a própria empresa, não é compra.`:''}</div></div>
     ${pcS.length?`<div class="panel" id="orc-comp"><h3><span>Orçamento por comprador${tipT('Meta e realizado de cada comprador no mês.')}</span> <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsC,skC||{})}</tr></thead>
       <tbody>${pcS.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
