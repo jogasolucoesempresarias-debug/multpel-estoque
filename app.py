@@ -1378,16 +1378,18 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
         total = 0.0; total_kg = 0.0
         for it in itens:
             total += core._n(it.get("valor"))
-            cx = core._n(it.get("qtunitcx")); q = core._n(it.get("qtd"))
-            if cx > 1 and q > 0:
-                qtde, un = f"{int(math.ceil(q / cx))}", "CX"
-                total_kg += math.ceil(q / cx) * core._n(it.get("peso_caixa"))
-            else:
-                qtde, un = (f"{int(q)}" if q else "—"), "UN"
+            # MESMA conversão da planilha do Winthor (core.item_master) — os dois documentos
+            # precisam bater linha a linha. `custo_master` é o preço da CAIXA nas linhas CX,
+            # senão "Qtde × Custo un." não fecharia com o "Vlr. Total" impresso ao lado.
+            q_master, custo_master, un = core.item_master(it.get("qtd"), it.get("qtunitcx"),
+                                                          it.get("custo_unit"))
+            qtde = f"{q_master}" if q_master else "—"
+            if un == "CX":
+                total_kg += q_master * core._n(it.get("peso_caixa"))
             ipi = core._n(it.get("percipi"))
             data.append([_i(it.get("codprod")), Paragraph(_e(str(it.get("descricao") or "")[:52]), cel_desc),
                          _e(it.get("embalagem") or "—"), un, _e(it.get("codfab") or "—"),
-                         qtde, _m(it.get("custo_unit")),
+                         qtde, _m(custo_master),
                          (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
         data.append(["", "", "", "", "", "", "", "TOTAL", _m(total)])
         col_w = [1.3 * cm, 5.0 * cm, 2.4 * cm, 0.9 * cm, 1.8 * cm, 1.3 * cm, 2.0 * cm, 1.2 * cm, 2.7 * cm]
@@ -1457,7 +1459,10 @@ def api_pedido_itens_winthor(numped):
 @app.route("/api/pedidos/<int:pid>.xlsx")
 def api_pedido_xlsx(pid):
     """Planilha de importação de pedido de compra do Winthor (v26+): 3 colunas, SEM cabeçalho —
-    A = código do produto · B = preço unitário · C = quantidade pedida (em UNIDADES)."""
+    A = código do produto · B = preço · C = quantidade pedida, ambos na **UNIDADE MASTER**
+    (pedido do diretor 07/2026: "tem que sair igual ao PDF, tudo em unidade Master").
+    Antes saía em unidades e divergia do PDF — o Winthor faz `B × C` literal, então o preço
+    converte junto com a quantidade (`core.item_master`), senão o valor do pedido mudaria."""
     if not store.disponivel():
         return jsonify({"ok": False, "error": "Postgres indisponível"}), 503
     pe = store.pedido_get(pid)
@@ -1467,8 +1472,7 @@ def api_pedido_xlsx(pid):
     wb = Workbook(); ws = wb.active; ws.title = "PEDIDO"
     for it in store.pedido_itens(pid):
         cod = int(core._n(it.get("codprod")))
-        preco = core._round(core._n(it.get("custo_unit")), 4)
-        qtd = int(round(core._n(it.get("qtd"))))
+        qtd, preco, _un = core.item_master(it.get("qtd"), it.get("qtunitcx"), it.get("custo_unit"))
         if cod <= 0 or qtd <= 0:
             continue
         ws.append([cod, preco, qtd])   # ordem exata do modelo Winthor: cód · preço · qtd

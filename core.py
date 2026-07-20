@@ -155,6 +155,29 @@ def arredonda_caixa(qt, qtunitcx):
     return cx * qtunitcx, cx
 
 
+def item_master(qtd_un, qtunitcx, custo_unit):
+    """Converte um item do pedido (gravado sempre em UNIDADES) para a **unidade master**,
+    que é como o pedido tem de sair no PDF e na planilha de importação do Winthor.
+
+    Fonte única de verdade dos dois documentos — antes a regra estava duplicada no PDF e na
+    planilha e elas divergiram: o PDF saía em caixa e o Excel em unidade (pedido do diretor
+    07/2026, "tem que sair tudo em unidade Master").
+
+    Devolve `(qtd, preco, unidade)`, com **`qtd × preco` sempre igual a `qtd_un × custo_unit`** —
+    o valor da linha não pode mudar por causa da conversão.
+    • com fator (`qtunitcx` > 1): qtd em CAIXAS e preço da CAIXA (`custo_unit × fator`);
+    • sem fator: a unidade do Winthor já É a master → devolve como está ("un").
+    O fator vem do `QTUNITCX`/`QTUNIT`, não do texto da embalagem — os dois divergem em alguns
+    cadastros (ex.: cód. 57474, embalagem diz CX/0100/UN mas o fator real é 10)."""
+    q = _n(qtd_un)
+    cx = _n(qtunitcx)
+    custo = _n(custo_unit)
+    if cx > 1 and q > 0:
+        n_cx = math.ceil(q / cx)
+        return n_cx, _round(custo * cx, 4), "CX"
+    return int(round(q)), _round(custo, 4), "UN"
+
+
 def _round(v, n=2):
     return round(v, n) if isinstance(v, (int, float)) else v
 
