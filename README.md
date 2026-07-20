@@ -128,6 +128,15 @@ Não precisa reiniciar o app depois de arrumar o banco: ele reconecta sozinho na
 
 ---
 
+## Marca: o sistema é da **JOGA**, a Multpel é a **cliente**
+A interface leva a marca JOGA (topbar, favicon, loader, tela de login e assinatura dos PDFs) — assets em `static/joga-*.svg`, copiados de `sitejoga/public/brand` (variante **dark**: `#F5F2EC` + laranja `#F4A52A`, porque o app é tema escuro). O loader é o mesmo `joga-loader.svg` do Multpel HTML: **anima por dentro** (hexágono pulsa, gráfico se desenha, seta dá pop) — por isso **não** leva `animation: spin` no CSS, senão gira e anima ao mesmo tempo.
+
+Continua **Multpel** de propósito (é dado da cliente, não marca do produto):
+- `MULTPEL_EMPRESA` — razão social/CNPJ/IE do bloco **EMITENTE** do pedido de compra: é a Multpel que emite o pedido ao fornecedor.
+- `logo-multpel-trofeu.png` no cabeçalho desse mesmo PDF — quem recebe é o fornecedor; a logo ali é a do comprador.
+- `NOMES_FILIAL` (“Multpel Matriz”) — nome real da filial 3.
+- Identificadores de infra invisíveis: `service: "multpel-estoque"` (`/health`), `DB_NAME=multpel_db`, e a chave `multpel_estoque_prefs` do localStorage — **trocar essa última faria todo usuário perder as preferências salvas** (aba, filtros, parâmetros).
+
 ## Cuidados (IMPORTANTE)
 - 🚫 **Nunca** mover este código para dentro do repo do Multpel HTML que será entregue à Multpel. É outro git, outro servidor — separação física, não confiar só em `.gitignore`.
 - 🔒 **Sempre** com `ESTOQUE_SENHA` em produção (URL pública expõe estoque + vendas).

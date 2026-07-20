@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Carregando">
+  <style>
+    .hx{fill:#F5F2EC;stroke:#F5F2EC;stroke-width:9;stroke-linejoin:round;animation:bt 1.9s ease-in-out infinite}
+    .gr{fill:none;stroke:#F4A52A;stroke-width:8.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:72;animation:dw 1.9s ease-in-out infinite}
+    .hd{fill:#F4A52A;transform-box:fill-box;transform-origin:center;animation:pp 1.9s ease-in-out infinite}
+    @keyframes dw{0%{stroke-dashoffset:72}50%{stroke-dashoffset:0}82%{stroke-dashoffset:0;opacity:1}94%{opacity:0}100%{stroke-dashoffset:0;opacity:0}}
+    @keyframes pp{0%,46%{opacity:0;transform:scale(.5)}60%{opacity:1;transform:scale(1.12)}70%{transform:scale(1)}82%{opacity:1}94%,100%{opacity:0}}
+    @keyframes bt{0%,100%{opacity:.9}50%{opacity:1}}
+    @media (prefers-reduced-motion:reduce){
+      .gr{animation:none;stroke-dashoffset:0}.hd{animation:none;opacity:1}.hx{animation:none}
+    }
+  </style>
+  <path class="hx" d="M50 6 L88 28 L88 72 L50 94 L12 72 L12 28 Z"/>
+  <path class="gr" d="M18 72 L33 55 L45 62 L65 39"/>
+  <path class="hd" d="M77 24 L73 47 L55 32 Z"/>
+</svg>

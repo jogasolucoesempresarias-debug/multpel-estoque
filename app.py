@@ -1,5 +1,5 @@
 """
-Painel de Estoque Multpel — app standalone.
+Painel de Estoque JOGA — app standalone (cliente: Multpel).
 Dev: python -X utf8 app.py   ->   http://localhost:5001
 Prod: waitress-serve --port=5001 app:app  (atrás do Traefik no Portainer)
 
@@ -32,14 +32,14 @@ store.init()  # cria tabelas estoque_* no Postgres (idempotente; degrada se indi
 
 # ───────────────────────── login (senha única compartilhada) ─────────────────────────
 _LOGIN_HTML = """<!doctype html><html lang=pt-BR><head><meta charset=utf-8>
-<title>Multpel · Estoque</title><meta name=viewport content="width=device-width,initial-scale=1">
+<title>JOGA · Estoque</title><meta name=viewport content="width=device-width,initial-scale=1">
 <style>body{margin:0;height:100vh;display:grid;place-items:center;background:#0a0e17;color:#e2e8f0;font-family:system-ui,sans-serif}
 .box{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:30px;width:300px}
 h1{font-size:1.1rem;margin:0 0 4px}.s{color:#64748b;font-size:.8rem;margin-bottom:18px}
 input{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #1e293b;background:#1a2235;color:#e2e8f0;margin-bottom:12px}
 button{width:100%;padding:10px;border:0;border-radius:8px;background:linear-gradient(135deg,#38bdf8,#818cf8);color:#0a0e17;font-weight:700;cursor:pointer}
 .e{color:#f87171;font-size:.8rem;margin-bottom:10px}</style></head>
-<body><form class=box method=post action=/login><h1>Multpel · Estoque</h1><div class=s>Acesso restrito</div>
+<body><form class=box method=post action=/login><h1>JOGA · Estoque</h1><div class=s>Acesso restrito</div>
 {erro}<input type=password name=senha placeholder=Senha autofocus><button>Entrar</button></form></body></html>"""
 
 
@@ -1100,7 +1100,7 @@ def _gerar_pdf(view, linhas, group_by=None):
     titulo_style = ParagraphStyle('t', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
     sub_style = ParagraphStyle('s', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
-    story = [Paragraph(f'<b>Multpel · Estoque</b> — {titulo}', titulo_style),
+    story = [Paragraph(f'<b>JOGA · Estoque</b> — {titulo}', titulo_style),
              Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')} · {len(linhas)} registros", sub_style),
              Spacer(1, 0.3 * cm)]
 
@@ -1317,7 +1317,7 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
                 for st in self._saved:
                     self.__dict__.update(st)
                     self.setFont('Helvetica', 7); self.setFillColor(colors.HexColor('#94a3b8'))
-                    self.drawString(1.2 * cm, 0.8 * cm, "Multpel · Estoque — documento interno de compra")
+                    self.drawString(1.2 * cm, 0.8 * cm, "JOGA · Estoque — documento interno de compra")
                     self.drawRightString(A4[0] - 1.2 * cm, 0.8 * cm, f"Página {self._pageNumber} de {n}")
                     _rlcanvas.Canvas.showPage(self)
                 _rlcanvas.Canvas.save(self)
@@ -1420,7 +1420,7 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
                                 topMargin=1.4 * cm, bottomMargin=1.5 * cm, title=f"Pedido {pe.get('n_pedido') or pe.get('id')}")
         lbl = ParagraphStyle('l', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#475569'))
         val = ParagraphStyle('v', parent=styles['Normal'], fontSize=11, textColor=colors.HexColor('#0a0e17'))
-        story = [Paragraph('<b>Multpel · Estoque</b> — Pedido de Compra', titulo_style),
+        story = [Paragraph('<b>JOGA · Estoque</b> — Pedido de Compra', titulo_style),
                  Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", sub_style), Spacer(1, 0.5 * cm)]
         linhas = [("Nº do pedido", pe.get('n_pedido') or '—'), ("Data do pedido", _d(pe.get('data_pedido'))),
                   ("Fornecedor", pe.get('fornecedor') or '—'), ("Comprador", pe.get('comprador') or '—'),

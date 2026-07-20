@@ -1,5 +1,5 @@
 'use strict';
-/* Painel de Estoque Multpel v2 — foco no comprador. Baixa snapshot 1x e deriva tudo client-side. */
+/* Painel de Estoque JOGA v2 — foco no comprador. Baixa snapshot 1x e deriva tudo client-side. */
 
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = 'DM Sans, sans-serif';
