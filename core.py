@@ -1059,9 +1059,13 @@ def resumo_ruptura(produtos):
 
 
 def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
-    """Cobertura MÍNIMA de estoque (pedido do diretor) — % de SKUs por faixa de cobertura:
-    • Em risco  = giro > 0 e cobertura ≤ `limiar_dias` (45d)
-    • Ideal     = giro > 0 e cobertura ≥ `limiar_dias`+1 (46d+)
+    """Cobertura MÍNIMA de estoque (pedido do diretor) — % de SKUs por faixa de cobertura.
+    `limiar_dias` = MÍNIMO de dias para o item contar como ideal (fronteira inclusiva):
+    • Em risco  = giro > 0 e cobertura < `limiar_dias` (≤44d)
+    • Ideal     = giro > 0 e cobertura ≥ `limiar_dias` (45d+)
+    A fronteira é inclusiva de propósito (ajuste 07/2026): 45d é o próprio ALVO de compra
+    (`cobertura_total`), então o item reposto no alvo ATINGIU a meta — contá-lo como "em risco"
+    punia justamente quem comprou certo (28 SKUs pousavam exatamente em 45d, ~2× os dias vizinhos).
     • Sem giro  = giro ≤ 0 (reportado à parte; NÃO entra no % ideal p/ não distorcer)
     O % ideal é medido só sobre os itens QUE GIRAM (base da 'cobertura mínima'); o gatilho de
     alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha."""
@@ -1074,7 +1078,7 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
             semgiro += 1; v_semgiro += valor
             continue
         cob = cobertura_dias_oficial(p.get("qtdisp") or 0, giro_dia)
-        if cob <= limiar_dias:
+        if cob < limiar_dias:          # fronteira inclusiva: cobertura == limiar já é ideal
             risco += 1; v_risco += valor
         else:
             ideal += 1; v_ideal += valor

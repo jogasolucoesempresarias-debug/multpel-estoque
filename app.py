@@ -592,29 +592,46 @@ def api_vencidos():
 @app.route("/api/resumos")
 def api_resumos():
     """Painel gerencial do diretor: 2 blocos-resumo (itens a vencer por faixa de validade +
-    cobertura de estoque por faixa de dias). Validade busca a janela inteira (não só 30d)."""
+    cobertura de estoque por faixa de dias). Validade busca a janela inteira (não só 30d).
+
+    Filtros (correção 07/2026): antes só o comprador era respeitado — curva/XYZ/fornecedor/depto
+    saíam do front e morriam aqui, então o painel não reagia ao filtro de curva. Agora passa pelo
+    `_aplicar_filtros_cliente` (o mesmo dos exports), o que também alinha tela e CSV/Excel/PDF.
+    EXCEÇÃO: o **orçamento** continua só por comprador — meta (65% da venda líq. 30d) e comprado
+    (pedido real do Winthor) não têm quebra por curva ABC; recortar um lado e não o outro daria um
+    "% da meta" falso. O front avisa na tela quando há filtro que o orçamento não consegue honrar."""
     produtos, params, filiais = _build_produtos()
     hoje = _hoje()
     comprador = request.args.get("comprador") or "TODOS"
     todos = comprador in ("", "TODOS")
     # respeita o filtro de comprador do topo (painéis recalculam por comprador)
     prod_f = produtos if todos else [p for p in produtos if (p.get("comprador") or "") == comprador]
+    # + demais filtros da UI (curva, XYZ, fornecedor, depto, busca…)
+    prod_f = _aplicar_filtros_cliente(prod_f)
     idx = {p["codprod"]: p for p in prod_f}
     lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=3650), filiais))
-    if not todos:
+    # recorta os lotes sempre que QUALQUER filtro estiver ativo (antes só quando havia comprador,
+    # o que faria a validade divergir dos outros blocos assim que a curva passasse a filtrar)
+    if len(prod_f) != len(produtos):
         cods = set(idx)
         lotes = [l for l in lotes if int(core._n(l.get("CODPROD"))) in cods]
     cab = _pedidos_data(filiais, hoje)["cab"]
     venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
                                  _mes_atual(), comprador, pct=0.65, hoje=hoje, meta_override=None)
+    # filtros ativos que o ORÇAMENTO não consegue honrar (não existe quebra por curva/XYZ/… na
+    # meta nem no pedido do Winthor) → o front mostra o aviso no card em vez de exibir % falso
+    _rot = {"curva": "curva", "xyz": "XYZ", "fornec": "fornecedor", "depto": "depto", "busca": "busca"}
+    orc_ignora = [lbl for arg, lbl in _rot.items() if request.args.get(arg)]
     return jsonify({
         "ok": True,
         "gerado_em": hoje.isoformat(),
+        "n_produtos": len(prod_f),
         "validade": core.resumo_validade(lotes, idx, hoje=hoje),
         "cobertura": core.resumo_cobertura(prod_f),
         "estoque_ideal": core.resumo_estoque_ideal(prod_f),
         "orcamento": orc["resumo"],
+        "orcamento_ignora": orc_ignora,
         "ruptura": core.resumo_ruptura(prod_f),
     })
 

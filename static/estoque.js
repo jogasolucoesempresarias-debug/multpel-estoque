@@ -16,7 +16,7 @@ const S = {
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
   cli:{comprador:'',curva:[],xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
-  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1},
+  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaBC:5},
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
 };
@@ -45,7 +45,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
@@ -96,6 +96,13 @@ const TIPS = {
     'Margem':'Lucro ÷ venda líquida.',
   },
   gerencial:{ 'Status':'Nível de atenção da faixa (urgente, alto, atenção, baixo, OK…).' },
+  meta_ruptura:{
+    _title:'Placar da meta de ruptura: % de itens zerados que ainda NÃO têm pedido de compra em aberto, separado por curva de venda. Curva ABC apurada sobre os últimos 90 dias; o placar não responde aos filtros do topo (meta que muda com o filtro não é meta).',
+    // rótulos são dinâmicos ("Curva A (meta 2,0%)"), então a busca usa a chave estável de `tipk`
+    'Curva A':'Itens da curva A (≈80% do faturamento) zerados e ainda sem pedido de compra em aberto ÷ TOTAL de produtos do comprador na curva A. Entre parênteses, o absoluto — base pequena faz 1 item virar um % alto.',
+    'Curva B+C':'Mesma conta nas curvas B e C somadas (item sem curva entra como C). O limite é maior que o da curva A porque são itens de menor peso no faturamento.',
+    'Status':'Acima da meta se QUALQUER uma das duas curvas estourar o seu limite. Limites editáveis em ⚙ Parâmetros.',
+  },
   ruptura:{
     _title:'Distribuição do estoque por dias de cobertura. Cobertura = ARREDONDA.CIMA(estoque ÷ giro diário); giro 0 = não calculável (cai em 121+). Métrica oficial da planilha.',
     'Faixa':'Faixa de cobertura em que o item cai (0-30, 31-60, 61-90, 91-120, 121+).',
@@ -350,6 +357,20 @@ function _sortArr(rows,sk){ return [...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk
   if(typeof x==='string'||typeof y==='string')return sk.dir*String(x).localeCompare(String(y)); return sk.dir*(x-y);}); }
 function sortTh(cols,sk,view){ view=view||S.view; return cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join(''); }
 function wireSortTbl(container,skKey,onChange){ if(!container)return; container.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skKey]||{};S.sort[skKey]={key:k,dir:cur.key===k?-cur.dir:-1};onChange();}); }
+
+// QS p/ endpoints que agregam no servidor (Painel gerencial): serverQS + os filtros GLOBAIS do
+// topo. Não usa exportQS() de propósito — aquele carrega estado específico de aba (val_faixa,
+// ven_mes, par_faixa…) que não faz sentido nos resumos.
+function filtrosQS(){
+  const p=new URLSearchParams(serverQS()), f=S.cli;
+  if(f.comprador) p.set('comprador_cod',f.comprador);
+  if(f.curva&&f.curva.length) p.set('curva',f.curva.join(','));
+  if(f.xyz) p.set('xyz',f.xyz);
+  if(f.fornec) p.set('fornec',f.fornec);
+  if(f.depto) p.set('depto',f.depto);
+  if((f.busca||'').trim()) p.set('busca',f.busca.trim());
+  return p.toString();
+}
 
 function exportQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
@@ -1102,6 +1123,100 @@ function renderRupturaComprador(P){
   $('#rc-curva').querySelectorAll('tr[data-curva]').forEach(tr=>tr.onclick=()=>goView('estoque_zero',{curva:tr.dataset.curva}));
 }
 
+/* ───────── Meta de ruptura (placar executivo) ─────────
+   Aba NOVA e isolada (decisão do diretor 07/2026): Cockpit, Painel gerencial e a aba Ruptura
+   ficam intocados — o placar não mexe no que já funciona.
+   Meta: "% s/ ped." ≤ metaA na curva A e ≤ metaBC nas curvas B+C.
+   "% s/ ped." = itens em ruptura SEM pedido de compra em aberto ÷ TOTAL de produtos do grupo —
+   mesma definição da aba Ruptura (core.ruptura_por_comprador), só que quebrada por curva.
+   Itens sem giro seguem no denominador de propósito (decisão do diretor: a cobertura tem de
+   existir independente do tamanho do catálogo) — terão meta própria no futuro.
+   Base ABC FIXADA em 90d: a curva é atribuída no servidor sobre o conjunto inteiro
+   (core._aplicar_curva), então só a UNIDADE e o PERÍODO DE VENDA a redefinem — os filtros de
+   tela apenas recortam a lista. Fixando o período, a meta para de andar quando alguém mexe no
+   seletor "Venda" do topo. Pelo mesmo motivo o placar ignora os filtros de tela. */
+const META_PER='90d';
+const _metaBase={key:null,produtos:null};
+
+function metaBaseQS(){ const p=new URLSearchParams(serverQS()); p.set('venda_periodo',META_PER); return p.toString(); }
+
+async function metaBaseProdutos(){
+  if(S.vperiodo===META_PER) return S.produtosAll;          // seletor já está em 90d → evita 2ª chamada
+  const key=metaBaseQS();
+  if(_metaBase.key===key&&_metaBase.produtos) return _metaBase.produtos;
+  const snap=await getJSON('/api/snapshot?'+key);
+  _metaBase.key=key; _metaBase.produtos=snap.produtos||[];
+  return _metaBase.produtos;
+}
+
+// agrega o % s/ pedido por comprador, separando curva A de B+C
+function metaAgrega(P){
+  const g={};
+  P.forEach(p=>{
+    const cod=p.codcomprador==null?0:p.codcomprador;
+    const o=g[cod]=g[cod]||{cod,nome:p.comprador||'Sem comprador',nA:0,sA:0,nBC:0,sBC:0};
+    const semPed=(p.qtdisp||0)<=0&&(p.giro_dia||0)>0&&(p.qtd_ja_pedida||0)<=0;
+    if((p.curva_abc||'C')==='A'){ o.nA++; if(semPed)o.sA++; }   // sem curva → C (regra da aba Ruptura)
+    else { o.nBC++; if(semPed)o.sBC++; }
+  });
+  return Object.values(g).map(o=>({...o,
+    pctA:o.nA?o.sA/o.nA*100:null, pctBC:o.nBC?o.sBC/o.nBC*100:null})).filter(o=>o.nA+o.nBC>0);
+}
+
+async function renderMetaRuptura(){
+  const _p=(v,d)=>v==null||!isFinite(+v)?d:+v;              // meta 0 é válida (tolerância zero)
+  const el=$('#v-meta_ruptura'), mA=_p(S.params.metaA,2), mBC=_p(S.params.metaBC,5);
+  // só mostra "carregando" em cache miss — senão a tabela pisca a cada clique de ordenação
+  const _cache=(S.vperiodo===META_PER)?S.produtosAll:(_metaBase.key===metaBaseQS()?_metaBase.produtos:null);
+  if(!_cache) el.innerHTML='<div class="count-line">Carregando a base de 90 dias…</div>';
+  let P;
+  try{ P=await metaBaseProdutos(); }
+  catch(e){ el.innerHTML=`<div class="count-line">Falha ao carregar a base da meta: ${esc(e.message)}</div>`; return; }
+  if(S.view!=='meta_ruptura') return;                      // trocou de aba durante o fetch
+
+  const fora=r=>(r.pctA!=null&&r.pctA>mA)||(r.pctBC!=null&&r.pctBC>mBC);
+  const rows0=metaAgrega(P).map(r=>({...r,st:fora(r)?1:0}));   // `st` numérico p/ a coluna Status ordenar
+  const T=rows0.reduce((s,r)=>({nA:s.nA+r.nA,sA:s.sA+r.sA,nBC:s.nBC+r.nBC,sBC:s.sBC+r.sBC}),{nA:0,sA:0,nBC:0,sBC:0});
+  const tA=T.nA?T.sA/T.nA*100:null, tBC=T.nBC?T.sBC/T.nBC*100:null;
+  const nFora=rows0.filter(fora).length;
+
+  // célula: % + absoluto (2% sobre base pequena vira 1 item — o absoluto evita leitura errada)
+  const cel=(pctv,semp,n,meta)=>{
+    if(!n) return '<td class="num muted">—</td>';
+    const ok=pctv<=meta, c=ok?C.green:C.red;
+    return `<td class="num"><b style="color:${c}">${dec(pctv,1)}%</b> <span class="muted">(${int(semp)}/${int(n)})</span> ${ok?'✓':'⚠'}</td>`;
+  };
+  const selo=(ok,txt)=>`<span class="badge" style="background:${ok?C.green:C.red}22;color:${ok?C.green:C.red}">${ok?'✓':'⚠'} ${txt}</span>`;
+
+  // `tipk` = chave estável no catálogo TIPS (o label carrega a meta e muda com o parâmetro)
+  const cols=[{k:'nome',label:'Comprador'},{k:'pctA',label:`Curva A (meta ${dec(mA,1)}%)`,tipk:'Curva A',num:1},
+    {k:'pctBC',label:`Curva B+C (meta ${dec(mBC,1)}%)`,tipk:'Curva B+C',num:1},{k:'st',label:'Status',tipk:'Status'}];
+  const sk=S.sort['metarupt']||{key:'pctBC',dir:-1};
+  const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${c.tipk?tip('meta_ruptura',c.tipk):''}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
+  const rows=_sortArr(rows0,sk);
+  const body=rows.map(r=>`<tr>
+      <td><span class="prod">${esc(r.nome)}</span></td>
+      ${cel(r.pctA,r.sA,r.nA,mA)}${cel(r.pctBC,r.sBC,r.nBC,mBC)}
+      <td>${selo(!fora(r),fora(r)?'Acima da meta':'Dentro da meta')}</td></tr>`).join('')
+    ||'<tr><td colspan="4" class="muted">Sem produtos no escopo.</td></tr>';
+  const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700">
+      <td>EMPRESA</td>${cel(tA,T.sA,T.nA,mA)}${cel(tBC,T.sBC,T.nBC,mBC)}
+      <td>${selo(!((tA!=null&&tA>mA)||(tBC!=null&&tBC>mBC)),((tA!=null&&tA>mA)||(tBC!=null&&tBC>mBC))?'Acima da meta':'Dentro da meta')}</td></tr>`:'';
+
+  el.innerHTML=`<h2 class="section"><span>Meta de ruptura — % sem pedido${tip('meta_ruptura','_title')}</span></h2>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      ${kpi('Compradores acima da meta',int(nFora)+' de '+int(rows0.length),'basta uma das curvas estourar',nFora?C.red:C.green)}
+      ${kpi(`Empresa · curva A (meta ${dec(mA,1)}%)`,tA!=null?dec(tA,1)+'%':'—',int(T.sA)+' de '+int(T.nA)+' itens',tA!=null&&tA>mA?C.red:C.green)}
+      ${kpi(`Empresa · curva B+C (meta ${dec(mBC,1)}%)`,tBC!=null?dec(tBC,1)+'%':'—',int(T.sBC)+' de '+int(T.nBC)+' itens',tBC!=null&&tBC>mBC?C.red:C.green)}
+    </div>
+    <div class="count-line"><b>% s/ ped.</b> = itens zerados (estoque ≤ 0 com giro) <b>ainda sem pedido de compra em aberto</b> ÷ total de produtos do comprador naquela curva. Entre parênteses, o absoluto. Limites editáveis em <b>⚙ Parâmetros</b>.</div>
+    <div class="count-line">Escopo fixo: <b>${esc(S.unidadeNome||'unidade atual')}</b> · curva ABC apurada sobre os <b>últimos 90 dias</b> de venda. O placar <b>não responde aos filtros do topo</b> de propósito — meta que muda de valor conforme o filtro não é meta. Para investigar item a item, use <b>Estoque → Ruptura</b>.</div>
+    <div class="panel" id="mr-tab"><div class="tbl-wrap"><table>
+      <thead><tr>${headr}</tr></thead>
+      <tbody>${body}${totRow}</tbody></table></div></div>`;
+  wireSortTbl($('#mr-tab'),'metarupt',renderMetaRuptura);
+}
+
 function renderProdutos(P){
   // colunas em caixa (mantém unidade e ACRESCENTA cx) — fator un/cx de cada item
   P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):(p.giro_mes||0); p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):(p.qtdisp||0);});
@@ -1295,15 +1410,17 @@ function resumoTabelaGrupo(titulo,faixas,colQt,lblQt,tipTxt){
     <tbody>${faixas.map(f=>`<tr><td>${f.faixa}</td><td class="num">${int(f[colQt])}</td><td class="num">${money(f.valor)}</td><td class="num">${pct(f.perc)}</td><td>${resumoBadge(f.status)}</td></tr>`).join('')}
     <tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td class="num">${int(tQt)}</td><td class="num">${money(tVal)}</td><td class="num">${pct(tPerc)}</td><td></td></tr></tbody></table></div></div>`;
 }
-function resumoCard(titulo,rows,cor,tipTxt){
+function resumoCard(titulo,rows,cor,tipTxt,nota){
   return `<div class="panel grow"><h3><span>${titulo}${tipT(tipTxt||'')}</span></h3>
     <table class="mini">${rows.map(([l,v])=>`<tr><td class="muted">${l}</td><td class="num"><b>${v}</b></td></tr>`).join('')}</table>
+    ${nota?`<div class="count-line" style="margin-top:6px;color:${C.orange}">${nota}</div>`:''}
     ${cor?`<div class="bar" style="margin-top:8px"><i style="width:0;background:${cor}"></i></div>`:''}</div>`;
 }
 async function injectResumos(sel){
   const el=$(sel); if(!el) return;
   const comp=S.compradorNome||'TODOS';
-  let o; try{ o=await getJSON('/api/resumos?'+serverQS()+'&comprador='+encodeURIComponent(comp)); }
+  // `comprador` (nome) é p/ o orçamento; os demais filtros vão em filtrosQS() e recortam os produtos
+  let o; try{ o=await getJSON('/api/resumos?'+filtrosQS()+'&comprador='+encodeURIComponent(comp)); }
   catch(e){ el.innerHTML=`<div class="count-line">Resumos indisponíveis: ${e.message}</div>`; return; }
   const orc=o.orcamento||{}, rup=o.ruptura||{};
   const dentro=(orc.saldo||0)>=0;
@@ -1314,7 +1431,12 @@ async function injectResumos(sel){
     ['Saldo da meta',money(orc.saldo)],
     ['Status',dentro?'DENTRO DA META':'FORA DA META'],
     ['Mês competência',orc.mes||'—'],
-  ],dentro?C.green:C.red);
+  ],dentro?C.green:C.red,'',
+    // orçamento é o único bloco que NÃO honra curva/XYZ/etc: nem a meta (65% da venda líq. do
+    // comprador) nem o comprado (pedido do Winthor) têm quebra por curva. Avisar > exibir % falso.
+    (o.orcamento_ignora||[]).length
+      ? `⚠ Não filtra por <b>${(o.orcamento_ignora||[]).join('</b>, <b>')}</b> — meta e pedido do Winthor não têm quebra por curva. Valores do comprador inteiro.`
+      : '');
   const cardRup=resumoCard('Ruptura de produtos'+tipT('Itens que deveriam ter estoque e não têm: estoque ≤ 0 e giro > 0. “Venda perdida” = o que se deixou de vender no período parado.'),[
     ['Itens em ruptura',int(rup.itens)],
     ['Total de produtos',int(rup.total)],
@@ -1322,11 +1444,15 @@ async function injectResumos(sel){
     ['Venda perdida (ruptura)',money(rup.venda_perdida)],
     ['Critério',rup.criterio||'ESTOQUE ≤ 0 E GIRO > 0'],
   ],C.red);
-  // Estoque ideal — cobertura mínima (0-45 risco / 46+ ideal) + "sem giro" à parte + gatilho <90%
+  // Estoque ideal — cobertura mínima + "sem giro" à parte + gatilho <90%
+  // Fronteira INCLUSIVA (ajuste 07/2026): cobertura == limiar já é ideal, porque o limiar é o
+  // próprio alvo de compra — quem repôs no alvo acertou. Rótulos derivam de `ei.limiar` p/ não
+  // voltarem a mentir se o limiar mudar no servidor.
   const ei=o.estoque_ideal||{}, iId=ei.ideal||{}, iRis=ei.em_risco||{}, iSem=ei.sem_giro||{};
+  const lim=ei.limiar!=null?ei.limiar:45;
   const metaPct=ei.meta_pct||0.90, alerta=!!ei.alerta, corIdeal=alerta?C.red:C.green;
   const idealPanel=`<div class="panel" id="gg-ideal-panel"${alerta?` style="border-color:${C.red}"`:''}>
-      <h3><span>Estoque ideal — cobertura mínima${tipT('% dos SKUs que giram por faixa de cobertura. Ideal = 46 dias ou mais; risco = até 45. Meta: ≥90% na faixa ideal. “Sem giro” fica à parte e não entra no %.')}</span>${alerta
+      <h3><span>Estoque ideal — cobertura mínima${tipT(`% dos SKUs que giram por faixa de cobertura. Ideal = ${lim} dias ou mais (${lim}d é o alvo de compra — quem repôs no alvo atingiu a meta); risco = menos de ${lim}. Meta: ≥90% na faixa ideal. “Sem giro” fica à parte e não entra no %.`)}</span>${alerta
         ?`<span class="badge" style="background:${C.red}22;color:${C.red}">⚠ abaixo da meta (≥${dec(metaPct*100,0)}%)</span>`
         :`<span class="badge" style="background:${C.green}22;color:${C.green}">✓ dentro da meta</span>`}</h3>
       <div class="row" style="align-items:center">
@@ -1334,16 +1460,16 @@ async function injectResumos(sel){
           <div class="chart-box sm" style="height:180px"><canvas id="gg-ideal"></canvas></div>
           <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
             <div style="font-size:1.5rem;font-weight:700;color:${corIdeal};line-height:1">${iId.pct!=null?pct(iId.pct):'—'}</div>
-            <div style="font-size:.58rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px">ideal ≥46d</div>
+            <div style="font-size:.58rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px">ideal ≥${int(lim)}d</div>
           </div>
         </div>
         <div class="grow">
           <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px">
-            ${kpi('Cobertura ideal (≥46d)',iId.pct!=null?pct(iId.pct):'—',int(iId.n)+' SKUs · '+moneyK(iId.valor),corIdeal)}
-            ${kpi('Em risco (≤45d)',iRis.pct!=null?pct(iRis.pct):'—',int(iRis.n)+' SKUs · '+moneyK(iRis.valor),C.red)}
+            ${kpi(`Cobertura ideal (≥${int(lim)}d)`,iId.pct!=null?pct(iId.pct):'—',int(iId.n)+' SKUs · '+moneyK(iId.valor),corIdeal)}
+            ${kpi(`Em risco (<${int(lim)}d)`,iRis.pct!=null?pct(iRis.pct):'—',int(iRis.n)+' SKUs · '+moneyK(iRis.valor),C.red)}
             ${kpi('Sem giro',iSem.pct!=null?pct(iSem.pct):'—',int(iSem.n)+' SKUs · '+moneyK(iSem.valor),C.dim)}
           </div>
-          <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥46 dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
+          <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥${int(lim)} dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
         </div>
       </div></div>`;
   el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos${tipT('Visão executiva do estoque: orçamento de compras, ruptura, validade, cobertura e lucro por comprador.')}</span></h2>
@@ -1357,7 +1483,7 @@ async function injectResumos(sel){
       </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
-  chart('gg-ideal',{type:'doughnut',data:{labels:['Ideal (≥46d)','Em risco (≤45d)'],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},
+  chart('gg-ideal',{type:'doughnut',data:{labels:[`Ideal (≥${int(lim)}d)`,`Em risco (<${int(lim)}d)`],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},
     options:{cutout:'66%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' SKUs'}}}}});
 }
 
@@ -1824,6 +1950,7 @@ function render(){
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
   if(S.view==='vencidos'){ renderVencidos(); savePrefs(); return; }
+  if(S.view==='meta_ruptura'){ renderMetaRuptura(); savePrefs(); return; }   // base própria (90d), não usa filtered()
   const P=filtered();
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade,ocupacao:renderOcupacao}[S.view]||renderCockpit)(P);
   savePrefs();
@@ -1855,6 +1982,7 @@ async function init(){
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
   $('#p-parado').value=S.params.parado; $('#p-fcmeses').value=S.params.fcmeses;
+  $('#p-meta-a').value=S.params.metaA; $('#p-meta-bc').value=S.params.metaBC;
   const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
@@ -1889,7 +2017,9 @@ async function init(){
     $('#f-busca').value=''; syncCurvaUI();
     render();
   };
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0};loadData();};
+  // meta aceita 0 (tolerância zero), então não dá p/ usar `||default` — vazio/inválido cai no default
+  const _meta=(id,d)=>{const v=($(id).value||'').trim(); return v===''||!isFinite(+v)?d:Math.max(0,+v);};
+  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0,metaA:_meta('#p-meta-a',2),metaBC:_meta('#p-meta-bc',5)};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
