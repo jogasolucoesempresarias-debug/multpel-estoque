@@ -298,6 +298,42 @@ FILTER(
 )"""
 
 
+def q_venda_produto_mensal_rca(data_ini, filiais=None):
+    """Venda BRUTA por CODPROD × mês (CALENDARIO[AnoMes]) desde data_ini.
+    Alimenta SÓ o gráfico "venda 12m" do 360° — NÃO encosta no giro/forecast (que continua
+    usando a q_vendas_mensal_rca, em QT). Mesmo padrão da q_venda_comprador_mensal_rca:
+    measure oficial [VENDA BRUTA] + relacionamento DTSAIDA→CALENDARIO.
+    Líquida = esta − q_devol_produto_mensal_rca."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODPROD],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
+        "venda", [VENDA BRUTA]
+    ),
+    [venda] <> 0
+)"""
+
+
+def q_devol_produto_mensal_rca(data_ini, filiais=None):
+    """Devolução por CODPROD × mês (CALENDARIO[AnoMes]) desde data_ini (DTENT).
+    Espelha a q_devol_comprador_mensal_rca, mas por produto — p/ a venda LÍQUIDA do
+    gráfico de 12 meses do 360° bater com o "Venda no período" do mesmo drawer."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_DEVOLUCAO[CODPROD],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_DEVOLUCAO,
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
+        "dev", [TOTAL DEVOLUCAO]
+    ),
+    [dev] <> 0
+)"""
+
+
 def q_devol_comprador_mensal_rca(data_ini, filiais=None):
     """Devolução por CODCOMPRADOR × mês (CALENDARIO[AnoMes]) desde data_ini (DTENT).
     Espelha o q_devol_comprador_rca, mas mensal — p/ a venda líquida do % da aba Vencidos."""

@@ -248,7 +248,7 @@ def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
 # ───────────────────────── produtos ─────────────────────────
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
                        hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
-                       preco_venda_map=None):
+                       preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
@@ -317,8 +317,14 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         giro_dia = giro_mes / 30.0
         serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
         # série mensal (até 12 últimos meses, ordem cronológica) p/ sparkline do 360°
-        serie_mensal = ([_round(_n(serie_am.get(am))) for am in reversed(_meses_anteriores(hoje, 12))]
+        serie_meses = list(reversed(_meses_anteriores(hoje, 12)))
+        serie_mensal = ([_round(_n(serie_am.get(am))) for am in serie_meses]
                         if serie_am else None)
+        # mesma janela em R$ — alimenta SÓ o gráfico "venda 12m" do 360°. Mapa separado de
+        # propósito: o de quantidade continua intocado alimentando giro/forecast/item novo.
+        serie_am_rs = (venda_mensal_rs_map or {}).get(cod)
+        serie_mensal_rs = ([_round(_n(serie_am_rs.get(am)), 2) for am in serie_meses]
+                           if serie_am_rs else None)
 
         cobertura = (qtdisp / giro_dia) if giro_dia > 0 and qtdisp > 0 else None
         # cobertura em dias inteiros + faixa (regra oficial da planilha; faixa fixa)
@@ -426,6 +432,12 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         lucro = venda - custo_vendido
         margem = (lucro / venda) if venda else None
 
+        # crescimento vs. o MESMO período do ANO ANTERIOR (líquida × líquida — comparar com a
+        # bruta inflaria o número). Sem venda no ano passado (item novo, ou período anterior a
+        # 2024, que é onde o RCA começa) → None ⇒ a tela mostra "—", nunca −100% nem infinito.
+        venda_ant = _n(((venda_ant_map or {}).get(cod) or {}).get("venda"))
+        crescimento = ((venda - venda_ant) / venda_ant) if venda_ant > 0 else None
+
         # XYZ — coeficiente de variação da série de 3 meses
         media = statistics.mean(serie) if serie else 0.0
         if media > 0:
@@ -515,6 +527,9 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "fatores_sazonais": saz["fatores"] if saz else None,
             "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
             "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
+            "venda_ano_ant": _round(venda_ant) if venda_ant else None,
+            "crescimento": _round(crescimento * 100, 1) if crescimento is not None else None,
+            "serie_mensal_rs": serie_mensal_rs, "serie_mensal_meses": serie_meses,
             "margem": _round(margem * 100, 1) if margem is not None else None,
             "preco_venda": _round(preco_venda, 4), "venda_perdida": _round(venda_perdida),
             "serie_giro": [_round(x) for x in serie],
@@ -680,12 +695,13 @@ def fornecedores(produtos, params=None):
             "codfornec": cf, "fornecedor": p["fornecedor"] or f"FORN {cf}",
             "comprador": p.get("comprador"),
             "n_produtos": 0, "valor": 0.0, "giro": 0.0, "venda": 0.0, "lucro": 0.0,
-            "disponivel": 0.0, "giro_dia": 0.0, "n_sem_giro": 0,
+            "disponivel": 0.0, "giro_dia": 0.0, "n_sem_giro": 0, "venda_ant": 0.0,
         })
         g["n_produtos"] += 1
         g["valor"] += (p["valor"] or 0)
         g["giro"] += (p["giro_mes"] or 0)
         g["venda"] += (p["venda"] or 0)
+        g["venda_ant"] += (p.get("venda_ano_ant") or 0)
         g["lucro"] += (p["lucro"] or 0)
         g["disponivel"] += (p["qtdisp"] or 0)
         g["giro_dia"] += (p["giro_dia"] or 0)
@@ -720,6 +736,8 @@ def fornecedores(produtos, params=None):
             "venda": _round(g["venda"]), "lucro": _round(g["lucro"]),
             "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
             "cobertura": _round(cobertura, 1) if cobertura is not None else None,
+            "venda_ano_ant": _round(g["venda_ant"]) if g["venda_ant"] else None,
+            "crescimento": _round((g["venda"] - g["venda_ant"]) / g["venda_ant"] * 100, 1) if g["venda_ant"] > 0 else None,
             "perc_giro": _round(perc_giro, 2), "perc_venda": _round(perc_venda, 2),
             "perc_estoque": _round(perc_est, 2),
             "indice": _round(indice, 2), "classificacao": classif,
@@ -1181,15 +1199,24 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
             continue
         cod = int(_n(r.get("CODPROD")))
         cad = prod_map.get(cod) or {}
+        emb = (embalagem_map or {}).get(cod) or {}
         uv = vol_unitario(cad)
-        cx = _n((embalagem_map or {}).get(cod, {}).get("qtunit")) or _n(cad.get("QTUNITCX")) or 1
-        d = ped.setdefault(np_, {"cubagem": 0.0, "skus": 0, "caixas": 0.0, "unid": 0.0, "sem_vol": 0})
+        cx = _n(emb.get("qtunit")) or _n(cad.get("QTUNITCX")) or 1
+        # peso: PCEMBALAGEM[PESOBRUTO] é o peso da CAIXA → multiplica pelas caixas do item
+        # (mesma regra da contagem de caixas: sem fator de caixa, a "caixa" é a própria unidade).
+        peso_cx = _n(emb.get("pesobruto"))
+        cxs = (oq / cx if cx > 1 else oq)
+        d = ped.setdefault(np_, {"cubagem": 0.0, "skus": 0, "caixas": 0.0, "unid": 0.0,
+                                 "sem_vol": 0, "peso": 0.0, "sem_peso": 0})
         d["cubagem"] += oq * uv
         d["unid"] += oq
-        d["caixas"] += (oq / cx if cx > 1 else oq)
+        d["caixas"] += cxs
+        d["peso"] += cxs * peso_cx
         d["skus"] += 1
         if uv <= 0:
             d["sem_vol"] += 1
+        if peso_cx <= 0:
+            d["sem_peso"] += 1
     out = []
     for np_, d in ped.items():
         r = cab_by[np_]
@@ -1213,9 +1240,10 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
             "comprador": comp_map.get(int(_n(r.get("CODCOMPRADOR")))),
             "skus": d["skus"], "caixas": _round(d["caixas"]), "unidades": _round(d["unid"]),
             "cubagem_m3": _round(cub, 3), "valor_aberto": _round(valor_aberto),
+            "peso_kg": _round(d["peso"], 2),
             "valor_m3": _round(valor_aberto / cub) if cub > 0 else None,
             "ocupacao": _round(ocup, 3), "status": status,
-            "sem_cubagem_itens": d["sem_vol"],
+            "sem_cubagem_itens": d["sem_vol"], "sem_peso_itens": d["sem_peso"],
             "dt_previsao": dtprev.isoformat() if dtprev else None,
         })
     out.sort(key=lambda x: x["cubagem_m3"], reverse=True)

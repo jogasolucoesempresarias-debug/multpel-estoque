@@ -351,6 +351,12 @@ const colCod={key:'codprod',label:'Cód',num:true};
 const colProd={key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`};
 const colForn={key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v||'—')}</span>`};
 const colGiroSpark={key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${int(p.giro_mes)} ${spark(p.serie_giro)}`};
+// crescimento vs. mesmo período do ano anterior. null = sem base no ano passado (item novo ou
+// período anterior a 2024, início do RCA) → "—", nunca −100%.
+const crescCell=v=>v==null?'<span class="muted" title="sem venda no mesmo período do ano anterior">—</span>'
+  :`<span style="color:${v>=0?C.green:C.red}">${v>=0?'+':''}${dec(v,1)}%</span>`;
+// usa fmt (não html) p/ funcionar também na tabela de Fornecedores, que só suporta fmt/badge
+const colCresc={key:'crescimento',label:'Cresc. AA',num:true,fmt:v=>crescCell(v)};
 
 // ── ordenação clicável p/ tabelas montadas na mão (headers com data-k) ──
 function _sortArr(rows,sk){ return [...rows].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(x==null)x=-Infinity;if(y==null)y=-Infinity;
@@ -1047,13 +1053,14 @@ function renderFornecedores(P){
   // Agrega ignorando a curva do produto (filtered(true)) e filtra os fornecedores por ABC no fim.
   const base=filtered(true);
   const tv=base.reduce((s,p)=>s+(p.valor||0),0)||1,tvenda=base.reduce((s,p)=>s+(p.venda||0),0)||1,g={};
-  base.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
+  base.forEach(p=>{if(p.codfornec==null)return;const o=g[p.codfornec]=g[p.codfornec]||{codfornec:p.codfornec,fornecedor:p.fornecedor||('FORN '+p.codfornec),n_produtos:0,valor:0,giro:0,venda:0,lucro:0,disp:0,girodia:0,vendaAnt:0};o.n_produtos++;o.valor+=(p.valor||0);o.giro+=(p.giro_mes||0);o.venda+=(p.venda||0);o.vendaAnt+=(p.venda_ano_ant||0);o.lucro+=(p.lucro||0);o.disp+=(p.qtdisp||0);o.girodia+=(p.giro_dia||0);});
   const lead=S.params.lead||10;
   // índice = % na VENDA (R$) ÷ % no ESTOQUE (R$) — "vende mais do que pesa". Antes usava giro em
   // unidades, distorcendo fornecedor de alto valor/baixo volume.
   const F=Object.values(g).map(o=>{const pv=o.venda/tvenda*100,pe=o.valor/tv*100,idx=pe>0?pv/pe:(pv>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
     let cl=(o.giro<=0&&o.venda<=0)?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
-    return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,cl};}).sort((a,b)=>b.valor-a.valor);
+    return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,
+      crescimento:o.vendaAnt>0?((o.venda-o.vendaAnt)/o.vendaAnt*100):null,cl};}).sort((a,b)=>b.valor-a.valor);
   // curva ABC do fornecedor por venda (Pareto do faturamento) — mesma leitura dos produtos
   {const _tv=F.reduce((s,o)=>s+(o.venda||0),0)||1; let _ac=0;
    [...F].sort((a,b)=>(b.venda||0)-(a.venda||0)).forEach(o=>{_ac+=(o.venda||0);const _p=_ac/_tv*100;o.curva_abc=_p<=80?'A':(_p<=95?'B':'C');});}
@@ -1061,7 +1068,7 @@ function renderFornecedores(P){
     {key:'curva_abc',label:'ABC',badge:true},
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
-    {key:'venda',label:'Venda',num:true,fmt:money},{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
+    {key:'venda',label:'Venda',num:true,fmt:money},colCresc,{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pv',label:'% venda',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
   const CLS={alta_performance:'Alta performance',equilibrado:'Equilibrado',estoque_alto:'Estoque alto',ruptura:'Ruptura',critico_sem_giro:'Crítico s/ giro'};
@@ -1227,7 +1234,7 @@ function renderProdutos(P){
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},
-    {key:'venda',label:'Venda',num:true,fmt:money},{key:'lucro',label:'Lucro',num:true,fmt:money},
+    {key:'venda',label:'Venda',num:true,fmt:money},colCresc,{key:'lucro',label:'Lucro',num:true,fmt:money},
     {key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
   // filtros LOCAIS desta aba (multi-seleção) — não afetam as outras abas
@@ -1339,6 +1346,13 @@ function renderComprasVendas(P){
 /* ───────── Orçamento ───────── */
 const PRAZO_BADGE={atrasado:['Atrasado','#ef4444'],chega_7:['Chega ≤7d','#f97316'],no_prazo:['No prazo','#22c55e'],recebido:['Recebido','#22c55e'],sem_prev:['Sem previsão','#64748b']};
 const prazoBadge=v=>{const s=PRAZO_BADGE[v];return s?`<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`:'—';};
+// peso/cubagem do pedido: total + aviso quando há item SEM cadastro no Winthor (senão o número engana).
+function pedMedida(v,un,dig,faltam){
+  const f=+faltam||0;
+  const av=f>0?` <small class="muted" title="${f} item(ns) sem cadastro de ${un==='kg'?'peso':'volume'} no Winthor — total subestimado">⚠</small>`:'';
+  if(v==null||v<=0) return f>0?`<span class="muted" title="sem cadastro de ${un==='kg'?'peso':'volume'} nos itens">—</span>`:'—';
+  return dec(v,dig)+' '+un+av;
+}
 
 async function renderOrcamento(useCache){
   const el=$('#v-orcamento');
@@ -1356,7 +1370,7 @@ async function renderOrcamento(useCache){
   const skC=S.sort['orc_comp'], pcS=skC?_sortArr(o.por_comprador||[],skC):(o.por_comprador||[]);
   const colsC=[{k:'comprador',label:'Comprador'},{k:'meta',label:'Meta',num:1},{k:'comprado',label:'Comprado',num:1},{k:'aberto',label:'Aberto',num:1},{k:'saldo',label:'Saldo',num:1},{k:'pct_consumido',label:'Consumido',num:1}];
   const skA=S.sort['orc_abertos'], abertosS=skA?_sortArr(abertos,skA):abertos;
-  const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}];
+  const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'peso_kg',label:'Peso',num:1},{k:'cubagem_m3',label:'Cubagem',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}];
   const skM=S.sort['orc_manuais'], manuaisS=skM?_sortArr(manuais,skM):manuais;
   const colsM=[{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'n_pedido',label:'Pedido'},{k:'valor',label:'Valor',num:1}];
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}${tipT('Meta de compras do mês vs. realizado (pedidos reais do Winthor). Verde = dentro; vermelho = estourou.')}</span>
@@ -1380,7 +1394,7 @@ async function renderOrcamento(useCache){
     </div>`:''}
     <div class="panel" id="orc-abertos"><h3><span>Acompanhamento de pedidos em aberto${tipT('Pedidos de compra ainda não recebidos e a previsão de entrega de cada um.')}</span> <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
       ${abertos.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsA,skA||{})}</tr></thead>
-      <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+      <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td class="num">${pedMedida(pe.peso_kg,'kg',1,pe.sem_peso_itens)}</td><td class="num">${pedMedida(pe.cubagem_m3,'m³',2,pe.sem_cubagem_itens)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>
     ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3><span>Pedidos da nossa plataforma${tipT('Pedidos lançados aqui, pendentes de envio ao Winthor — não somam no realizado até voltarem da base oficial.')}</span> <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
@@ -1660,28 +1674,38 @@ function modalPlano(it){
 }
 
 /* ───────── plano de reposição (360°) ───────── */
-function planoDrawer(plano){
-  if(!plano||plano.sem_giro||!plano.semanas||!plano.semanas.length) return '';
-  const libs=plano.liberacoes||[];
-  const prox=libs[0];
+// Bloco de VENDA (12 meses) do 360°. Substituiu o gráfico do plano de reposição — a venda é a
+// informação mais importante aqui (decisão do diretor). A linha "Próximo pedido" do plano
+// CONTINUA, porque é acionável; só o gráfico mudou.
+const MES_ABREV=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+const mesLbl12=am=>{const s=String(am);return MES_ABREV[+s.slice(4)-1]+'/'+s.slice(2,4);};
+const _temSerie=a=>Array.isArray(a)&&a.some(v=>(v||0)>0);
+function planoDrawer(plano,p){
+  const prox=(plano&&!plano.sem_giro&&(plano.liberacoes||[])[0])||null;
   const resumo=prox
     ? `Próximo pedido: <b>${int(prox.qt)} un</b> (${money(prox.valor)}) — ${prox.semana===0?'<b>sair agora</b>':'liberar em '+dt(prox.data)+' (sem. +'+prox.semana+')'}`
     : 'Sem necessidade de pedido no horizonte.';
-  return `<div class="d-sec">Plano no tempo (12 sem.)</div>
-    <div class="count-line">${resumo}${plano.inbound_zero?' · <span class="muted">sem trânsito no BI; reabastecimento planejado</span>':''}</div>
-    <div class="chart-box sm" style="height:170px"><canvas id="d-plano"></canvas></div>`;
+  const tem=_temSerie(p&&p.serie_mensal_rs)||_temSerie(p&&p.serie_mensal);
+  return `<div class="d-sec">Venda (12 meses)</div>
+    <div class="count-line">${resumo}</div>
+    ${tem?'<div class="chart-box sm" style="height:175px"><canvas id="d-venda12"></canvas></div>'
+        :'<div class="muted" style="font-size:.8rem">Sem venda registrada nos últimos 12 meses.</div>'}`;
 }
-function buildPlanoChart(plano){
-  if(!plano||plano.sem_giro||!plano.semanas||!plano.semanas.length) return;
-  const W=plano.semanas, seg=plano.estoque_seguranca||0;
-  const labels=W.map(w=>'S'+w.semana);
-  const saldo=W.map(w=>w.saldo_proj), receb=W.map(w=>(w.receb_prog||0)+(w.receb_plan||0));
-  chart('d-plano',{data:{labels,datasets:[
-      {type:'bar',label:'Recebimentos',data:receb,backgroundColor:C.accent2,borderRadius:4,order:2},
-      {type:'line',label:'Saldo projetado',data:saldo,borderColor:C.accent,backgroundColor:'transparent',tension:.25,pointRadius:2,order:1},
-      {type:'line',label:'Estoque segurança',data:W.map(()=>seg),borderColor:C.orange,borderDash:[5,4],pointRadius:0,borderWidth:1.5,order:0},
-    ]},options:{plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:9}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+int(c.raw)}}},
-      scales:{y:{beginAtZero:false,ticks:{callback:v=>int(v)}}}}});
+function buildVendaChart(p){
+  const meses=(p&&p.serie_mensal_meses)||[];
+  const rs=p&&p.serie_mensal_rs, un=p&&p.serie_mensal;
+  if(!meses.length||!(_temSerie(rs)||_temSerie(un))) return;
+  const ds=[];
+  if(_temSerie(rs)) ds.push({type:'bar',label:'Venda R$',yAxisID:'y',data:rs,backgroundColor:C.accent,borderRadius:4,order:2});
+  if(_temSerie(un)) ds.push({type:'line',label:'Unidades',yAxisID:_temSerie(rs)?'y1':'y',data:un,
+    borderColor:C.green,backgroundColor:'transparent',tension:.25,pointRadius:2,borderWidth:2,order:1});
+  const scales={y:{position:'left',ticks:{callback:v=>_temSerie(rs)?moneyK(v):int(v)}}};
+  if(_temSerie(rs)&&_temSerie(un)) scales.y1={position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>int(v)}};
+  chart('d-venda12',{data:{labels:meses.map(mesLbl12),datasets:ds},
+    options:{maintainAspectRatio:false,
+      plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:9}}},
+        tooltip:{callbacks:{label:c=>c.dataset.yAxisID==='y1'||!_temSerie(rs)?('Unidades: '+int(c.raw)):('Venda: '+money(c.raw))}}},
+      scales}});
 }
 
 /* ───────── produto 360 ───────── */
@@ -1722,7 +1746,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
       <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(p.valor_sugerido_liq)}</span></div>
       <div class="lote-row"><span>Status</span><span>${statExec(p.status_exec)}</span></div>
-      ${planoDrawer(p.plano)}
+      ${planoDrawer(p.plano,p)}
       ${enderecosDrawer(j.enderecos)}
       <div class="d-sec">Lotes / validade</div>
       ${lotes.length?lotes.map(l=>{
@@ -1731,7 +1755,7 @@ async function openProduto(cod){
         return `<div class="lote-row"><span>${dt(l.dtval)} · lote ${esc(l.numlote)}</span><span class="lr-r">${int(l.qt)} un · ${l.dias_para_vencer}d ${badge(l.classificacao)}</span></div>${sub}`;
       }).join(''):'<div class="muted" style="font-size:.8rem">Sem lotes endereçados.</div>'}`;
     wireDrawer();
-    buildPlanoChart(p.plano);
+    buildVendaChart(p);
   }catch(e){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Erro: '+e.message+'</div>'; wireDrawer(); }
 }
 function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }

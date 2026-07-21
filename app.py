@@ -272,10 +272,31 @@ def _venda_datas(periodo, hoje):
 
 
 def _vendas_map(periodo, hoje, filiais=None):
-    """{cod: {venda, custo, qtd}} líquido (venda − devoluções) do RCA, escopado por filiais de
-    VENDA da unidade. Degrada se RCA indisponível."""
+    """{cod: {venda, custo, qtd}} líquido (venda − devoluções) do RCA p/ o período selecionado."""
     ini, fim = _venda_datas(periodo, hoje)
-    key = f"venda:{periodo}:{_filiais_key(filiais)}:{ini}:{fim}"
+    return _vendas_liquidas(ini, fim, filiais)
+
+
+def _ano_antes(d):
+    """Mesma data no ano anterior (29/02 → 28/02)."""
+    try:
+        return d.replace(year=d.year - 1)
+    except ValueError:
+        return d.replace(year=d.year - 1, day=28)
+
+
+def _vendas_ano_ant_map(periodo, hoje, filiais=None):
+    """{cod: {venda, custo, qtd}} líquido do MESMO período no ANO ANTERIOR — base do
+    crescimento (YoY) por item e, agregado, por fornecedor. Mesma fórmula da venda atual
+    (líquida), senão o crescimento sairia inflado (bruta × líquida)."""
+    ini, fim = _venda_datas(periodo, hoje)
+    return _vendas_liquidas(_ano_antes(ini), _ano_antes(fim), filiais)
+
+
+def _vendas_liquidas(ini, fim, filiais=None):
+    """{cod: {venda, custo, qtd}} líquido (venda − devoluções − devol. avaria) do RCA no
+    intervalo, escopado por filiais de VENDA. Degrada p/ {} se o RCA estiver indisponível."""
+    key = f"vendaliq:{_filiais_key(filiais)}:{ini}:{fim}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -296,6 +317,36 @@ def _vendas_map(periodo, hoje, filiais=None):
         print(f"[venda] RCA indisponível ({e}). Camada de vendas desabilitada.")
         m = {}
     pbi._CACHE.set(key, m, 1800)
+    return m
+
+
+def _vendas_mensal_rs_map(hoje, filiais=None):
+    """{cod: {AnoMes(int): venda_LÍQUIDA R$}} dos últimos 12 meses — alimenta SÓ o gráfico
+    "venda 12m" do drawer 360°. Mapa SEPARADO do de quantidade (que alimenta giro/forecast)
+    de propósito: mexer naquele quebraria a metodologia de giro já calibrada.
+    Líquida (bruta − devolução) p/ bater com o "Venda no período" do próprio drawer.
+    Buscado sob demanda (só quando abre um produto) e cacheado 12h p/ servir os demais."""
+    ini = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)
+    for _ in range(12):
+        ini = (ini - timedelta(days=1)).replace(day=1)
+    key = f"vmesrs:{_filiais_key(filiais)}:{hoje.strftime('%Y-%m')}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    m = {}
+    try:
+        for r in pbi.run_dax_rca(Q.q_venda_produto_mensal_rca(ini, filiais)):
+            c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
+            if am:
+                m.setdefault(c, {})[am] = core._n(r.get("venda"))
+        for r in pbi.run_dax_rca(Q.q_devol_produto_mensal_rca(ini, filiais)):
+            c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
+            if am and c in m and am in m[c]:
+                m[c][am] -= core._n(r.get("dev"))
+    except Exception as e:
+        print(f"[venda 12m] RCA indisponível ({e}). Gráfico de venda do 360° cai p/ unidades.")
+        m = {}
+    pbi._CACHE.set(key, m, 43200)  # 12h
     return m
 
 
@@ -389,21 +440,25 @@ def _build_produtos():
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
-    # série mensal do RCA: sempre buscada (cache 12h). Com forecast ligado alimenta o forecast;
-    # com forecast desligado serve ao fallback de giro dos ITENS NOVOS (giro média-3m = 0 + venda
-    # real recente) em core.construir_produtos. Janela de 6m cobre o fallback quando forecast off.
+    # série mensal do RCA (QT): sempre buscada (cache 12h). Com forecast ligado alimenta o
+    # forecast; desligado, serve ao fallback de giro dos ITENS NOVOS e à série de 12 meses do
+    # 360°. Janela de 12m p/ o gráfico de venda do drawer ficar completo — o giro/forecast leem
+    # só os meses que precisam, então a janela maior não muda nenhum cálculo.
     if params.get("forecast"):
-        venda_mensal = _vendas_mensal_map(params["forecast_meses"], _hoje(),
+        venda_mensal = _vendas_mensal_map(max(12, int(params["forecast_meses"])), _hoje(),
                                           profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
     else:
-        venda_mensal = _vendas_mensal_map(6, _hoje(), filiais=filiais_v)
+        venda_mensal = _vendas_mensal_map(12, _hoje(), filiais=filiais_v)
     ja_pedida = _pedidos_data(filiais_e, _hoje())["ja_pedida"]
     embalagem = _embalagem_map()
     preco_venda = _preco_venda_map(filiais_v)
+    # crescimento (YoY): venda líquida do MESMO período no ano anterior, por produto.
+    # Serve o item (aba Produtos) e, agregado por fornecedor, a aba Fornecedores.
+    venda_ant = _vendas_ano_ant_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
-                                       preco_venda_map=preco_venda)
+                                       preco_venda_map=preco_venda, venda_ant_map=venda_ant)
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:
@@ -651,6 +706,12 @@ def api_produto(codprod):
         except Exception as e:
             print(f"[enderecos] WMS indisponível p/ {codprod} ({e}).")
         p = {**p, "plano": core.plano_reposicao(p, params, hoje=_hoje())}
+        # série de VENDA dos últimos 12 meses (R$ líquido + unidades) p/ o gráfico do 360°.
+        # Buscada aqui (sob demanda) e não no snapshot inteiro — cacheada 12h p/ os próximos.
+        meses = list(reversed(core._meses_anteriores(_hoje(), 12)))
+        rs = (_vendas_mensal_rs_map(_hoje(), _filiais_venda()) or {}).get(codprod) or {}
+        p["serie_mensal_meses"] = meses
+        p["serie_mensal_rs"] = [core._round(core._n(rs.get(am)), 2) for am in meses] if rs else None
     return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos})
 
 
@@ -741,9 +802,11 @@ def api_plano_reposicao():
 _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
                  "qtdisp", "qtd_ja_pedida", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
-                 "valor", "venda", "lucro", "margem", "status_abast", "status_parado"],
+                 "valor", "venda", "venda_ano_ant", "crescimento", "lucro", "margem",
+                 "status_abast", "status_parado"],
     "comprasvendas": ["codprod", "descricao", "fornecedor", "curva_abc", "comprador", "valor", "venda",
-                      "lucro", "margem", "giro_mes", "cobertura", "dias_sem_venda"],
+                      "venda_ano_ant", "crescimento", "lucro", "margem", "giro_mes", "cobertura",
+                      "dias_sem_venda"],
     "reposicao": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "giro_mes",
                   "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
@@ -878,6 +941,7 @@ def _export_data(view):
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
         cols = ["codfornec", "fornecedor", "curva_abc", "comprador", "n_produtos", "valor", "giro", "cobertura",
+                "venda_ano_ant", "crescimento",
                 "venda", "lucro", "margem", "perc_venda", "perc_estoque", "indice", "classificacao"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()
@@ -1013,7 +1077,8 @@ _PDF_COLS = {
                  ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"),
                  ("status_abast", "Abast.", "text")],
     "comprasvendas": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
-                      ("valor", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
+                      ("valor", "Estoque", "money"), ("venda", "Venda", "money"),
+                      ("crescimento", "Cresc. AA", "pct"), ("lucro", "Lucro", "money"),
                       ("margem", "Margem", "pct"), ("cobertura", "Cob.(d)", "int")],
     "reposicao": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                   ("qtdisp", "Disp.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
@@ -1033,7 +1098,8 @@ _PDF_COLS = {
                  ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
                  ("valor_risco", "Valor risco", "money"), ("classificacao", "Classe", "text")],
     "fornecedores": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 34), ("n_produtos", "Itens", "int"),
-                     ("valor", "Estoque", "money"), ("venda", "Venda", "money"), ("margem", "Margem", "pct"),
+                     ("valor", "Estoque", "money"), ("venda", "Venda", "money"),
+                     ("crescimento", "Cresc. AA", "pct"), ("margem", "Margem", "pct"),
                      ("indice", "Índice", "num"), ("classificacao", "Classe", "text")],
     "compradores": [("codcomprador", "Cód", "text"), ("comprador", "Comprador", "text", 30), ("n_produtos", "Itens", "int"),
                     ("estoque", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),
@@ -1195,12 +1261,29 @@ def api_orcamento():
     filiais = _filiais_estoque()
     hoje = _hoje()
     pct = float(request.args.get("pct") or 0.65)
-    cab = _pedidos_data(filiais, hoje)["cab"]
+    pdata = _pedidos_data(filiais, hoje)
+    cab = pdata["cab"]
     venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
     # meta sempre automática (65% da venda líquida 30d por comprador) — sem override manual
     res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
                                  mes, comprador, pct=pct, hoje=hoje, meta_override=None,
                                  cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+    # peso + cubagem por pedido: mesma fonte (PCPEDIDO/PCITEM) já carregada → NENHUMA query nova.
+    # Só existe p/ pedido em ABERTO (logistica_pedidos ignora o recebido) — que é o que a tabela mostra.
+    try:
+        _log = core.logistica_pedidos(pdata["cab"], pdata["itens"], _cadastro_produtos(),
+                                      _embalagem_map(), _compradores_map(), _cadastro_fornecedores(),
+                                      hoje=hoje)
+        _lmap = {p["numped"]: p for p in _log["pedidos"]}
+        for _pe in res["pedidos"]:      # 'abertos' referencia os MESMOS dicts
+            _l = _lmap.get(_pe["numped"])
+            if _l:
+                _pe["cubagem_m3"] = _l["cubagem_m3"]
+                _pe["peso_kg"] = _l["peso_kg"]
+                _pe["sem_cubagem_itens"] = _l["sem_cubagem_itens"]
+                _pe["sem_peso_itens"] = _l["sem_peso_itens"]
+    except Exception as e:
+        print(f"[orcamento] peso/cubagem indisponível ({e}).")
     manuais = store.pedidos_pendentes(mes, comprador) if store.disponivel() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),
