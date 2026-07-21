@@ -1410,6 +1410,12 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
         tit_bloco = ParagraphStyle('tb', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold', textColor=colors.white)
         corpo = ParagraphStyle('cb', parent=styles['Normal'], fontSize=7.6, textColor=colors.HexColor('#0a0e17'), leading=11.5)
         cel_desc = ParagraphStyle('cd', parent=styles['Normal'], fontSize=6.3, leading=7.3, textColor=colors.HexColor('#0a0e17'))
+        # Cód.Fab como Paragraph = REDE DE SEGURANÇA: a coluna (3,40cm) já cabe o maior código
+        # do cadastro hoje (23 chars), então na prática não quebra; mas se um dia cadastrarem um
+        # código maior, ele QUEBRA em 2 linhas em vez de vazar por cima da coluna Qtde.
+        # splitLongWords: código não tem espaço, então precisa poder partir no meio da "palavra".
+        cel_cod = ParagraphStyle('cf', parent=styles['Normal'], fontSize=6.5, leading=7.6,
+                                 splitLongWords=1, textColor=colors.HexColor('#0a0e17'))
 
         def _bloco(titulo, corpo_html):
             t = Table([[Paragraph(titulo, tit_bloco)], [Paragraph(corpo_html, corpo)]], colWidths=[18.6 * cm])
@@ -1473,7 +1479,8 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
                 total_kg += q_master * core._n(it.get("peso_caixa"))
             ipi = core._n(it.get("percipi"))
             data.append([_i(it.get("codprod")), Paragraph(_e(str(it.get("descricao") or "")[:52]), cel_desc),
-                         _e(it.get("embalagem") or "—"), un, _e(it.get("codfab") or "—"),
+                         _e(it.get("embalagem") or "—"), un,
+                         Paragraph(_e(it.get("codfab") or "—"), cel_cod),
                          qtde, _m(custo_master),
                          (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
         data.append(["", "", "", "", "", "", "", "TOTAL", _m(total)])
