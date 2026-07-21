@@ -708,7 +708,7 @@ def api_produto(codprod):
         p = {**p, "plano": core.plano_reposicao(p, params, hoje=_hoje())}
         # série de VENDA dos últimos 12 meses (R$ líquido + unidades) p/ o gráfico do 360°.
         # Buscada aqui (sob demanda) e não no snapshot inteiro — cacheada 12h p/ os próximos.
-        meses = list(reversed(core._meses_anteriores(_hoje(), 12)))
+        meses = core._meses_ate(_hoje(), 12)   # inclui o mês corrente (venda em andamento)
         rs = (_vendas_mensal_rs_map(_hoje(), _filiais_venda()) or {}).get(codprod) or {}
         p["serie_mensal_meses"] = meses
         p["serie_mensal_rs"] = [core._round(core._n(rs.get(am)), 2) for am in meses] if rs else None

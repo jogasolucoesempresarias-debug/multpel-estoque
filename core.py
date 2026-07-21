@@ -92,6 +92,20 @@ def _meses_anteriores(hoje, n):
     return out
 
 
+def _meses_ate(hoje, n):
+    """Lista dos N AnoMes terminando NO MÊS CORRENTE (ordem cronológica, mais antigo 1º).
+    Usada SÓ pelo gráfico de venda 12m do 360°, que precisa mostrar o mês em andamento
+    (o comprador quer ver a venda de hoje). NÃO usar em giro/forecast/sazonal: lá a janela
+    é de meses FECHADOS de propósito — um mês pela metade subestimaria a previsão."""
+    out, ano, mes = [], hoje.year, hoje.month
+    for _ in range(int(n)):
+        out.append(ano * 100 + mes)
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+    return list(reversed(out))
+
+
 def previsao_giro_mensal(serie_am, meses, hoje):
     """Forecast bruto: média móvel SIMPLES da QT vendida nos N meses fechados anteriores.
     serie_am: {AnoMes: qtd}. Retorna giro mensal previsto (qtd/mês) ou None se sem histórico."""
@@ -316,8 +330,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
                 giro_mes, giro_fonte = gnovo, "novo_item"
         giro_dia = giro_mes / 30.0
         serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
-        # série mensal (até 12 últimos meses, ordem cronológica) p/ sparkline do 360°
-        serie_meses = list(reversed(_meses_anteriores(hoje, 12)))
+        # série mensal (12 meses, ordem cronológica) p/ sparkline e gráfico do 360°.
+        # INCLUI o mês corrente (_meses_ate) — o diretor precisa ver a venda do mês em
+        # andamento; a tela marca a última barra como parcial p/ não parecer queda.
+        serie_meses = _meses_ate(hoje, 12)
         serie_mensal = ([_round(_n(serie_am.get(am))) for am in serie_meses]
                         if serie_am else None)
         # mesma janela em R$ — alimenta SÓ o gráfico "venda 12m" do 360°. Mapa separado de

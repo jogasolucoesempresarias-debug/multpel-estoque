@@ -1688,15 +1688,20 @@ function planoDrawer(plano,p){
   const tem=_temSerie(p&&p.serie_mensal_rs)||_temSerie(p&&p.serie_mensal);
   return `<div class="d-sec">Venda (12 meses)</div>
     <div class="count-line">${resumo}</div>
-    ${tem?'<div class="chart-box sm" style="height:175px"><canvas id="d-venda12"></canvas></div>'
+    ${tem?`<div class="chart-box sm" style="height:175px"><canvas id="d-venda12"></canvas></div>
+        <div class="count-line" style="margin-top:4px">Inclui o <b>mês corrente</b> (barra mais clara) — ainda em andamento, então tende a ficar abaixo dos fechados.</div>`
         :'<div class="muted" style="font-size:.8rem">Sem venda registrada nos últimos 12 meses.</div>'}`;
 }
 function buildVendaChart(p){
   const meses=(p&&p.serie_mensal_meses)||[];
   const rs=p&&p.serie_mensal_rs, un=p&&p.serie_mensal;
   if(!meses.length||!(_temSerie(rs)||_temSerie(un))) return;
+  // o último mês é o CORRENTE (parcial) → barra mais clara, p/ não ser lido como queda
+  const _d=new Date(), hojeAM=_d.getFullYear()*100+(_d.getMonth()+1);
+  const iParc=meses.indexOf(hojeAM);
+  const corBar=meses.map((m,i)=>i===iParc?'rgba(56,189,248,.42)':C.accent);
   const ds=[];
-  if(_temSerie(rs)) ds.push({type:'bar',label:'Venda R$',yAxisID:'y',data:rs,backgroundColor:C.accent,borderRadius:4,order:2});
+  if(_temSerie(rs)) ds.push({type:'bar',label:'Venda R$',yAxisID:'y',data:rs,backgroundColor:corBar,borderRadius:4,order:2});
   if(_temSerie(un)) ds.push({type:'line',label:'Unidades',yAxisID:_temSerie(rs)?'y1':'y',data:un,
     borderColor:C.green,backgroundColor:'transparent',tension:.25,pointRadius:2,borderWidth:2,order:1});
   const scales={y:{position:'left',ticks:{callback:v=>_temSerie(rs)?moneyK(v):int(v)}}};
@@ -1704,7 +1709,9 @@ function buildVendaChart(p){
   chart('d-venda12',{data:{labels:meses.map(mesLbl12),datasets:ds},
     options:{maintainAspectRatio:false,
       plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:9}}},
-        tooltip:{callbacks:{label:c=>c.dataset.yAxisID==='y1'||!_temSerie(rs)?('Unidades: '+int(c.raw)):('Venda: '+money(c.raw))}}},
+        tooltip:{callbacks:{
+          label:c=>c.dataset.yAxisID==='y1'||!_temSerie(rs)?('Unidades: '+int(c.raw)):('Venda: '+money(c.raw)),
+          afterBody:c=>(c&&c.length&&c[0].dataIndex===iParc)?'mês em andamento (parcial)':''}}},
       scales}});
 }
 
