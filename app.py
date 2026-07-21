@@ -1477,7 +1477,14 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
                          qtde, _m(custo_master),
                          (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
         data.append(["", "", "", "", "", "", "", "TOTAL", _m(total)])
-        col_w = [1.3 * cm, 5.0 * cm, 2.4 * cm, 0.9 * cm, 1.8 * cm, 1.3 * cm, 2.0 * cm, 1.2 * cm, 2.7 * cm]
+        # Larguras dimensionadas pelo CONTEÚDO REAL (medido com pdfmetrics), não no olho:
+        # Cód.Fab chega a 23 chars no cadastro (ex.: "ET40401TRB/SB1,5P20MBAI") e precisa de
+        # 3,26cm — com os 1,8cm antigos o texto VAZAVA por cima da coluna Qtde (string em
+        # célula do ReportLab não quebra nem corta). Redistribuí a folga das demais colunas;
+        # a fonte segue 6,5pt (legibilidade — o pedido é impresso e vai ao fornecedor) e a
+        # Descrição ainda GANHOU espaço. IPI % = 1,00cm porque a linha "TOTAL" mora nela (0,98).
+        col_w = [1.10 * cm, 6.45 * cm, 1.85 * cm, 0.60 * cm, 3.40 * cm,
+                 0.85 * cm, 1.55 * cm, 1.00 * cm, 1.80 * cm]   # soma = 18,60cm (útil do A4)
         tbl = Table(data, repeatRows=1, colWidths=col_w)
         tbl.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), azul),
